@@ -127,9 +127,14 @@ Ok "router answering on http://127.0.0.1:$Port"
 if (-not $NoTray) {
     $tray = Join-Path $AppDir "app\windows\tray.ps1"
     $a = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$tray`""
-    Register-ScheduledTask -TaskName $TrayTask -Action $a -Trigger (New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME) -Force | Out-Null
-    Start-ScheduledTask -TaskName $TrayTask
-    Ok "tray icon installed (bottom-right, next to the clock)"
+    $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+    $trigger.Delay = "PT20S"  # let the desktop finish loading: a tray started the instant of logon can die with 0xc0000142
+    $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive  # the tray needs the user's desktop
+    $traySettings = New-ScheduledTaskSettingsSet -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) `
+        -ExecutionTimeLimit ([TimeSpan]::Zero) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+    Register-ScheduledTask -TaskName $TrayTask -Action $a -Trigger $trigger -Principal $principal -Settings $traySettings -Force | Out-Null
+    try { Start-ScheduledTask -TaskName $TrayTask; Ok "tray icon installed (bottom-right, next to the clock)" }
+    catch { Warn "tray icon installed, but could not start it now (it starts at your next logon): $_" }
 }
 
 # --- app window: Start menu entry ------------------------------------------------------
