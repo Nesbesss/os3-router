@@ -1,0 +1,11 @@
+#!/bin/sh
+# Opens the OS3 Router app: the router's own page (/app) in a Chromium-family app window (own window, no
+# address bar), else a small GTK window (window.py, WebKitGTK), else the default browser.
+HERE=$(cd "$(dirname "$0")" && pwd)
+PORT=$(cd "$HERE/../.." && python3 -c "from codex_os3 import config; print(config.load()['port'])" 2>/dev/null || echo 11435)
+URL="http://localhost:$PORT/app${1:+#$1}"
+for b in google-chrome google-chrome-stable chromium chromium-browser microsoft-edge microsoft-edge-stable brave-browser; do
+  command -v "$b" >/dev/null 2>&1 && exec "$b" --app="$URL" --window-size=1100,760 --class=os3-router
+done
+python3 "$HERE/window.py" "$URL" && exit 0
+exec xdg-open "$URL"

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.1 (2026-09-26)
+- **The OS3 Router app on Windows and Linux:** its own window (no address bar), with the same screens as on Mac.
+  Windows: Start menu → OS3 Router, or double-click the tray icon. Linux: OS3 Router in your app menu
+
 ## 0.4.0 (2026-09-26)
 - **The OS3 Router app:** a calm, simple app with your status, your limits as rings, the models per role with
   an effort slider and a fallback, the setup wizard, help and problem reports. On macOS it opens as its own

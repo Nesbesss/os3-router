@@ -111,10 +111,16 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(200, f.read(), "text/html; charset=utf-8")
         if path.startswith("/api/"):
             return self.api("GET", path, cfg)
-        m = re.fullmatch(r"/guide/([0-9a-z-]+\.jpg)", path)  # setup screenshots
+        m = re.fullmatch(r"/guide/([0-9a-z-]+\.(jpg|png))", path)  # setup screenshots, app icon
         if m and os.path.isfile(os.path.join(UI_DIR, "guide", m.group(1))):
             with open(os.path.join(UI_DIR, "guide", m.group(1)), "rb") as f:
-                return self.send(200, f.read(), "image/jpeg", [("Cache-Control", "max-age=86400")])
+                return self.send(200, f.read(), "image/" + ("jpeg" if m.group(2) == "jpg" else "png"),
+                                 [("Cache-Control", "max-age=86400")])
+        if path == "/app.webmanifest":  # name and icon for the app window (Edge / Chrome app mode)
+            return self.send(200, {"name": "OS3 Router", "short_name": "OS3 Router", "start_url": "/app",
+                                   "display": "standalone", "background_color": "#1b1b1e", "theme_color": "#1b1b1e",
+                                   "icons": [{"src": "/guide/app-icon.png", "sizes": "256x256", "type": "image/png"}]},
+                             "application/manifest+json")
         self.send(404, {"error": {"message": "not found"}})
 
     def do_POST(self):

@@ -157,6 +157,16 @@ class Service(unittest.TestCase):
         d = self.post({"tools": WEATHER, "messages": [{"role": "user", "content": "FAKE_BADJSON"}]})
         self.assertEqual(d["choices"][0]["finish_reason"], "tool_calls")
 
+    def test_app_window_page(self):
+        page = urllib.request.urlopen(self.url("/app"), timeout=10).read().decode()
+        self.assertIn('<link rel="manifest" href="/app.webmanifest">', page)
+        m = json.load(urllib.request.urlopen(self.url("/app.webmanifest"), timeout=10))
+        self.assertEqual((m["name"], m["start_url"]), ("OS3 Router", "/app"))
+        icon = urllib.request.urlopen(self.url(m["icons"][0]["src"]), timeout=10)
+        self.assertEqual((icon.headers["Content-Type"], icon.read()[:4]), ("image/png", b"\x89PNG"))
+        with self.assertRaises(urllib.error.HTTPError):  # only guide images, nothing else from ui/
+            urllib.request.urlopen(self.url("/guide/../app.html"), timeout=10)
+
     def test_ui_and_export(self):
         self.post({"tools": WEATHER, "messages": [{"role": "user", "content": "export me"}]})
         page = urllib.request.urlopen(self.url("/"), timeout=10).read().decode()

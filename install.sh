@@ -49,6 +49,7 @@ if [ "$UNINSTALL" = 1 ]; then
     rm -rf "$HOME/Applications/OS3 Router.app" "$HOME/Applications/Codex OS3.app"
   else
     systemctl --user disable --now codex-os3 codex-os3-keepalive 2>/dev/null || true
+    rm -f "$HOME/.local/share/applications/os3-router.desktop"
     rm -f "$UNIT" "$KUNIT"; systemctl --user daemon-reload 2>/dev/null || true
     pkill -f -- "-m codex_os3 keepalive" 2>/dev/null || true
     { crontab -l 2>/dev/null | grep -v "codex-os3-keepalive" || true; } | crontab - 2>/dev/null || true
@@ -292,8 +293,22 @@ fi
 
 # --------------------------------------------------------------------------- connect OS3
 "$PY" -m codex_os3 setup-info
-if [ "$OS" = Darwin ]; then open "http://localhost:$PORT/#setup" 2>/dev/null || true
-elif [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then xdg-open "http://localhost:$PORT/#setup" >/dev/null 2>&1 || true; fi
+if [ "$OS" = Linux ]; then  # the OS3 Router app: app-menu entry, then open it on the setup wizard
+  mkdir -p "$HOME/.local/share/applications"
+  cat > "$HOME/.local/share/applications/os3-router.desktop" <<DESKTOP
+[Desktop Entry]
+Type=Application
+Name=OS3 Router
+Comment=Status, limits and models of your OS3 router
+Exec=sh "$APP_DIR/app/linux/os3-router-app"
+Icon=$APP_DIR/codex_os3/ui/guide/app-icon.png
+Categories=Utility;Network;
+StartupWMClass=os3-router
+DESKTOP
+  ok "app menu: OS3 Router"
+  [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && (nohup sh "$APP_DIR/app/linux/os3-router-app" setup >/dev/null 2>&1 &)
+elif [ "$NO_APP" = 1 ]; then open "http://localhost:$PORT/app#setup" 2>/dev/null || true
+fi  # macOS: the app installed above opens on the setup wizard by itself
 
 if [ "$NO_WAIT" = 0 ] && [ -t 1 ]; then
   b "Waiting for OS3 to connect… (save the connection in OS3 and send it a message; Ctrl-C to skip)"

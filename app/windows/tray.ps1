@@ -20,7 +20,9 @@ $menu = New-Object System.Windows.Forms.ContextMenuStrip
 $statusItem = $menu.Items.Add("os3-router: …"); $statusItem.Enabled = $false
 $limitItem = $menu.Items.Add("limits: …"); $limitItem.Enabled = $false
 $menu.Items.Add("-") | Out-Null
-$menu.Items.Add("Open dashboard", $null, { Start-Process "http://localhost:$(Port)/" }) | Out-Null
+function OpenApp { Start-Process powershell.exe -WindowStyle Hidden -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", (Join-Path $PSScriptRoot "open-app.ps1") }
+$openItem = $menu.Items.Add("Open OS3 Router", $null, { OpenApp }); $openItem.Font = New-Object System.Drawing.Font($openItem.Font, [System.Drawing.FontStyle]::Bold)
+$menu.Items.Add("Open web dashboard", $null, { Start-Process "http://localhost:$(Port)/" }) | Out-Null
 $menu.Items.Add("Copy OS3 settings", $null, {
     $c = Api "config"
     [System.Windows.Forms.Clipboard]::SetText("endpoint: http://localhost:$($c.port)/v1`nmodel id: $($c.model)`napi key: $($c.api_key)`ncontext window: 200000")
@@ -34,7 +36,7 @@ $menu.Items.Add("Reload router", $null, { try { Post "reload" | Out-Null } catch
 $menu.Items.Add("-") | Out-Null
 $menu.Items.Add("Quit tray", $null, { $icon.Visible = $false; [System.Windows.Forms.Application]::Exit() }) | Out-Null
 $icon.ContextMenuStrip = $menu
-$icon.add_DoubleClick({ Start-Process "http://localhost:$(Port)/" })
+$icon.add_DoubleClick({ OpenApp })
 
 function Dot($color) {
     $bmp = New-Object System.Drawing.Bitmap 16, 16
@@ -48,27 +50,8 @@ $green = Dot ([System.Drawing.Color]::FromArgb(12, 163, 12))
 $amber = Dot ([System.Drawing.Color]::FromArgb(250, 178, 25))
 $red = Dot ([System.Drawing.Color]::FromArgb(208, 59, 59))
 
-function Plain($body) {  # changelog markdown -> plain bullets
-    $out = New-Object System.Collections.Generic.List[string]
-    foreach ($l in ($body -split "`n")) {
-        if ($l -match '^\s*- ') { $out.Add("• " + ($l -replace '^\s*- ', '')) }
-        elseif ($l.Trim() -and $out.Count) { $out[$out.Count - 1] += " " + $l.Trim() }
-    }
-    (($out -join "`n") -replace '\*\*', '') -replace '`', ''
-}
 $script:wnShown = $false
 $script:lastAlert = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()  # only alerts from now on
-function WhatsNew {  # after an update, once (the web UI or menu bar app may show it instead)
-    $script:wnShown = $true
-    try {
-        $w = Api "whatsnew"
-        if (-not $w.show) { return }
-        $text = ($w.sections | ForEach-Object { $_.title + "`n" + (Plain $_.body) }) -join "`n`n"
-        [System.Windows.Forms.MessageBox]::Show("os3-router was updated.`n`n$text", "What's new in os3-router $($w.version)") | Out-Null
-        Post "whatsnew/seen" | Out-Null
-    } catch {}
-}
-
 function Update {
     try {
         $s = Api "status"
@@ -78,7 +61,7 @@ function Update {
         $statusItem.Text = if ($agentOk) { "rabbit-agent connected · $($s.model)" } else { "rabbit-agent: $($s.agent.status)" }
         $limitItem.Text = "5h: $([math]::Round($s.limits.p_pct))%  ·  weekly: $([math]::Round($s.limits.s_pct))%"
         $icon.Text = "os3-router — $($statusItem.Text)".Substring(0, [Math]::Min(63, "os3-router — $($statusItem.Text)".Length))
-        if ($s.whats_new -and -not $script:wnShown) { WhatsNew }
+        if ($s.whats_new -and -not $script:wnShown) { $script:wnShown = $true; OpenApp }  # the app shows what's new
         foreach ($a in @($s.alerts | Where-Object { $_.ts -gt $script:lastAlert })) {  # 90% limit, fallback switch
             $icon.ShowBalloonTip(8000, "os3-router", $a.text, "Warning"); $script:lastAlert = $a.ts
         }

@@ -21,6 +21,7 @@ if ($Uninstall) {
     Get-CimInstance Win32_Process -Filter "Name like 'python%'" | Where-Object { $_.CommandLine -like "*codex_os3*" } |
         ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
     Remove-Item -Recurse -Force $AppDir -ErrorAction SilentlyContinue
+    Remove-Item -Force (Join-Path ([Environment]::GetFolderPath("Programs")) "OS3 Router.lnk") -ErrorAction SilentlyContinue
     if ($Purge) { Remove-Item -Recurse -Force $HomeDir -ErrorAction SilentlyContinue; Ok "removed all data" }
     Ok "uninstalled"; exit 0
 }
@@ -126,9 +127,21 @@ if (-not $NoTray) {
     Ok "tray icon installed (bottom-right, next to the clock)"
 }
 
+# --- app window: Start menu entry ------------------------------------------------------
+$OpenApp = Join-Path $AppDir "app\windows\open-app.ps1"
+try {
+    $lnk = Join-Path ([Environment]::GetFolderPath("Programs")) "OS3 Router.lnk"
+    $s = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk)
+    $t = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $OpenApp -Print
+    if ($t) { $s.TargetPath, $s.Arguments = $t -split "\|", 2 }  # straight to Edge/Chrome: no console flash
+    else { $s.TargetPath = "powershell.exe"; $s.Arguments = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$OpenApp`"" }
+    $s.IconLocation = (Join-Path $AppDir "assets\icon.ico"); $s.Description = "OS3 Router"; $s.Save()
+    Ok "Start menu: OS3 Router"
+} catch { Warn "could not create the Start menu entry: $_" }
+
 & $Py -m codex_os3 setup-info
 if ($NoWait) { Pop-Location; exit 0 }
-Start-Process "http://localhost:$Port/#setup"
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $OpenApp -Page setup
 Write-Host "Waiting for OS3 to connect… (save the connection in OS3 and send it a message; Ctrl-C to skip)"
 & $Py -m codex_os3 wait-for-os3 1800 | Out-Null
 if ($LASTEXITCODE -eq 0) { Ok "OS3 is connected — you're done" } else { Warn "no request from OS3 yet; the dashboard shows when it connects" }
