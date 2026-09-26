@@ -33,7 +33,7 @@ jobs:
       - uses: actions/checkout@v4
       - shell: pwsh
         run: |
-          foreach ($f in "install.ps1", "app/windows/tray.ps1", "app/windows/open-app.ps1") {
+          foreach ($f in "install.ps1", "app/windows/tray.ps1", "app/windows/open-app.ps1", "app/windows/shortcut.ps1") {
             $errs = $null
             [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $f), [ref]$null, [ref]$errs) | Out-Null
             if ($errs) { $errs | ForEach-Object { Write-Error "${f}: $_" }; exit 1 }

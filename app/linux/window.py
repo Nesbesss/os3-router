@@ -11,14 +11,14 @@ try:
             break
         except ValueError:
             continue
-    from gi.repository import Gtk, WebKit2
+    from gi.repository import GLib, Gtk, WebKit2
 except (ImportError, ValueError):
     sys.exit(1)
 
 url = sys.argv[1]
+GLib.set_prgname("os3-router")  # matches StartupWMClass in the app-menu entry
 win = Gtk.Window(title="OS3 Router")
 win.set_default_size(1100, 760)
-win.set_wmclass("os3-router", "OS3 Router")
 icon = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "codex_os3", "ui", "guide", "app-icon.png")
 if os.path.exists(icon):
     win.set_icon_from_file(icon)

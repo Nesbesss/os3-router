@@ -11,5 +11,7 @@ $browsers = @(
     "$env:ProgramFiles\Google\Chrome\Application\chrome.exe", "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe",
     "$env:LOCALAPPDATA\Google\Chrome\Application\chrome.exe")
 $b = $browsers | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
-if ($Print) { if ($b) { "$b|--app=$url --window-size=1100,760" }; return }
-if ($b) { Start-Process $b -ArgumentList "--app=$url", "--window-size=1100,760" } else { Start-Process $url }
+# its own browser profile: no first-run welcome, and the normal browser profile is never touched
+$flags = "--app=$url --window-size=1100,760 --user-data-dir=`"$(Join-Path $HomeDir 'appwindow')`" --no-first-run --no-default-browser-check"
+if ($Print) { if ($b) { "$b|$flags" }; return }
+if ($b) { Start-Process $b -ArgumentList $flags } else { Start-Process $url }

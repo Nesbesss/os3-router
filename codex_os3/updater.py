@@ -97,9 +97,28 @@ def update_apps(tag):
                     key="app-updated")
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
-    elif sys.platform == "win32":
+    elif sys.platform == "win32":  # Start menu entry (installs updated from before 0.4.1 lack it), new tray
+        subprocess.run(["powershell.exe", "-NoProfile", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File",
+                        os.path.join(APP, "app", "windows", "shortcut.ps1")], capture_output=True, timeout=120,
+                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         for a in ("/End", "/Run"):
             subprocess.run(["schtasks", a, "/TN", "codex-os3 tray"], capture_output=True, timeout=30)
+    elif sys.platform.startswith("linux"):  # app-menu entry for the OS3 Router app window
+        d = os.path.expanduser("~/.local/share/applications")
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "os3-router.desktop"), "w") as f:
+            f.write(DESKTOP.format(app=APP))
+
+
+DESKTOP = """[Desktop Entry]
+Type=Application
+Name=OS3 Router
+Comment=Status, limits and models of your OS3 router
+Exec=sh "{app}/app/linux/os3-router-app"
+Icon={app}/codex_os3/ui/guide/app-icon.png
+Categories=Utility;Network;
+StartupWMClass=os3-router
+"""
 
 
 def maybe(cfg):

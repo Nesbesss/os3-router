@@ -129,15 +129,8 @@ if (-not $NoTray) {
 
 # --- app window: Start menu entry ------------------------------------------------------
 $OpenApp = Join-Path $AppDir "app\windows\open-app.ps1"
-try {
-    $lnk = Join-Path ([Environment]::GetFolderPath("Programs")) "OS3 Router.lnk"
-    $s = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk)
-    $t = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $OpenApp -Print
-    if ($t) { $s.TargetPath, $s.Arguments = $t -split "\|", 2 }  # straight to Edge/Chrome: no console flash
-    else { $s.TargetPath = "powershell.exe"; $s.Arguments = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$OpenApp`"" }
-    $s.IconLocation = (Join-Path $AppDir "assets\icon.ico"); $s.Description = "OS3 Router"; $s.Save()
-    Ok "Start menu: OS3 Router"
-} catch { Warn "could not create the Start menu entry: $_" }
+try { & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $AppDir "app\windows\shortcut.ps1"); Ok "Start menu: OS3 Router" }
+catch { Warn "could not create the Start menu entry: $_" }
 
 & $Py -m codex_os3 setup-info
 if ($NoWait) { Pop-Location; exit 0 }
