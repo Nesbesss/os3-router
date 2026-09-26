@@ -1,8 +1,11 @@
 # os3-router tray icon for Windows (beta). Polls the router's local API and
 # offers the same actions as the macOS menu bar app. Started at logon by install.ps1.
-Add-Type -AssemblyName System.Windows.Forms, System.Drawing
-
 $HomeDir = if ($env:CODEX_OS3_HOME) { $env:CODEX_OS3_HOME } else { Join-Path $env:USERPROFILE ".codex-os3" }
+# The task runs hidden, so a startup failure would be invisible: write it to tray.log in the data folder
+function Log($m) { try { Add-Content -Path (Join-Path $HomeDir "tray.log") -Value "$(Get-Date -Format s) $m" } catch {} }
+trap { Log "tray stopped: $($_ | Out-String)"; break }
+Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+Log "tray starting"
 function Port {  # config.json only holds changed settings: no "port" key means the default
     try { $p = (Get-Content (Join-Path $HomeDir "config.json") -Raw | ConvertFrom-Json).port } catch { $p = $null }
     if ($p) { $p } else { 11435 }
