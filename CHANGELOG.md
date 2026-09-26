@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.4.2 (2026-09-27)
+- **Windows installer:** signing in with ChatGPT no longer makes the installer stop at the Codex login check.
+
 ## 0.4.1 (2026-09-26)
 - **The OS3 Router app on Windows and Linux:** its own window (no address bar), with the same screens as on Mac.
   Windows: Start menu → OS3 Router, or double-click the tray icon. Linux: OS3 Router in your app menu
