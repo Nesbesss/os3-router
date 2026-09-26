@@ -55,8 +55,13 @@ if (-not (Get-Command codex -ErrorAction SilentlyContinue)) {
 $Codex = (Get-Command codex -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1).Source
 if (-not $Codex) { Die "codex not on PATH after install (open a new terminal and re-run)" }
 Ok "codex: $Codex"
-& $Codex login status *> $null
-if ($LASTEXITCODE -ne 0) { Write-Host "Log in to Codex with your ChatGPT account"; & $Codex login; if ($LASTEXITCODE -ne 0) { Die "codex login failed" } }
+# Windows PowerShell 5.1 turns any native stderr output into a terminating NativeCommandError while
+# $ErrorActionPreference is "Stop", even when the command exits 0 ("Logged in using ChatGPT" goes to
+# stderr). So run the status check with "Continue" and judge only by its exit code.
+$prevEap = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+try { & $Codex login status *> $null; $loginStatus = $LASTEXITCODE } finally { $ErrorActionPreference = $prevEap }
+if ($loginStatus -ne 0) { Write-Host "Log in to Codex with your ChatGPT account"; & $Codex login; if ($LASTEXITCODE -ne 0) { Die "codex login failed" } }
 Ok "codex is logged in"
 
 # --- rabbit-agent ----------------------------------------------------------------------
