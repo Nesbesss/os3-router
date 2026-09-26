@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.4.3 (2026-09-27)
+- **Windows tray icon:** starts 20 seconds after sign-in and retries if startup fails. Startup errors are saved to a log, and setup continues if the icon cannot start immediately.
+
 ## 0.4.2 (2026-09-27)
 - **Windows installer:** signing in with ChatGPT no longer makes the installer stop at the Codex login check.
 
