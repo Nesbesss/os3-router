@@ -11,6 +11,15 @@
 - **Browser workers** get the browser tool's step order spelled out (open, probe, connect, then page commands).
 - **Token counts** on the dashboard are per step again (continued steps were counted as running totals).
 
+## 0.4.14 (2026-09-29)
+- **Keep OS3 running while the computer is idle.** Turn on Prevent idle sleep in the app's Settings, the Mac menu bar, or the Windows tray. It is off by default. The screen may still turn off; choosing Sleep or closing a laptop lid still pauses OS3.
+
+## 0.4.13 (2026-09-29)
+- **Restart confirmation works reliably.** Refreshing the Activity page no longer makes one Restart click open multiple confirmation dialogs.
+
+## 0.4.12 (2026-09-29)
+- **More reliable updates on Windows.** A router timeout test now allows extra time for Windows to close processes, so a successful update is less likely to be rejected as a test failure.
+
 ## 0.4.11 (2026-09-27)
 - **Fix for 0.4.10:** workers could fail at the very end with "unhashable type: 'dict'" when they reported their
   result files. OS3 describes each file as an object (node, path, deliver to user); the router now reads and writes

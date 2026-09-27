@@ -50,7 +50,7 @@ struct UsageLimit: Decodable { let ts: Double; let resets: String? }
 struct Status: Decodable {
     let version: String; let limits: Limits?; let agent: Agent?; let watchdog: Watchdog?
     let running: Int; let model: String; let endpoint: String; let usage_limit: UsageLimit?
-    let whats_new: Bool?
+    let whats_new: Bool?; let no_sleep: Bool?
 }
 struct Config: Decodable { let api_key: String; let port: Int; let model: String }
 
@@ -111,14 +111,17 @@ final class RouterModel: ObservableObject {
         }
     }
 
-    func post(_ path: String) async throws -> [String: Any] {
+    func post(_ path: String, body: [String: Any] = [:]) async throws -> [String: Any] {
         var r = URLRequest(url: URL(string: base + "/api/" + path)!)
         r.httpMethod = "POST"
         r.setValue("1", forHTTPHeaderField: "X-Codex-OS3")
         r.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        r.httpBody = Data("{}".utf8)
+        r.httpBody = try JSONSerialization.data(withJSONObject: body)
         r.timeoutInterval = 120
-        let (d, _) = try await URLSession.shared.data(for: r)
+        let (d, response) = try await URLSession.shared.data(for: r)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw URLError(.badServerResponse)
+        }
         return (try? JSONSerialization.jsonObject(with: d) as? [String: Any]) ?? [:]
     }
 
@@ -197,6 +200,16 @@ final class RouterModel: ObservableObject {
         launchAtLogin = SMAppService.mainApp.status == .enabled
     }
 
+    func setPreventIdleSleep(_ enabled: Bool) {
+        Task {
+            do {
+                let result = try await post("config", body: ["no_sleep": enabled])
+                guard result["ok"] as? Bool == true else { throw URLError(.badServerResponse) }
+                refresh()
+            } catch { flash("Could not change sleep setting") }
+        }
+    }
+
     @Published var note: String?
     func flash(_ s: String) {
         note = s
@@ -271,6 +284,10 @@ struct MenuContent: View {
             Divider()
             Toggle("Open at login", isOn: Binding(get: { model.launchAtLogin }, set: { _ in model.toggleLaunchAtLogin() }))
                 .toggleStyle(.checkbox)
+            Toggle("Prevent idle sleep", isOn: Binding(
+                get: { model.status?.no_sleep ?? false }, set: { model.setPreventIdleSleep($0) }))
+                .toggleStyle(.checkbox).disabled(model.status == nil)
+                .help("Keeps this Mac awake while the router runs; the display can still turn off.")
             HStack {
                 Button("Stop router") { model.service(start: false) }.disabled(model.status == nil)
                 Spacer()

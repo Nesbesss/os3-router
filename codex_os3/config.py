@@ -30,6 +30,7 @@ DEFAULTS = {
     "watchdog": True,
     "restart_agent": True,    # watchdog may restart a stuck rabbit-agent
     "auto_update": True,      # install new releases from GitHub (tested first, zero downtime)
+    "no_sleep": False,       # opt in to preventing idle system sleep while the router runs
     "codex_images": True,     # workers create images with Codex's own image generation (no paid image provider)
     "engine": "exec",         # "appserver" (prototype): one long-running codex instead of one per request
     "stream_chat": False,     # prototype, appserver only: stream the main chat's answer to OS3 as it's written
