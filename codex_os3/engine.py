@@ -83,22 +83,41 @@ class Turn:
             return []
 
     def hand_over_images(self, d):
-        """Models sometimes make the image and then forget to give it to OS3: add report_result_files."""
+        """Models sometimes make the image and then forget to give it to OS3: add report_result_files.
+        Never fails the request: on anything unexpected the model's own decision goes through."""
+        try:
+            return self._hand_over_images(d)
+        except Exception as e:
+            self.ev("images_handover_failed", f"{type(e).__name__}: {e}", "warn")
+            return d
+
+    def _hand_over_images(self, d):
         new = self.new_images() if self.own_images() else []
+        if not new:
+            return d
         calls = [c for c in (d.get("calls") or []) if isinstance(c, dict) and c.get("tool")] if d.get("kind") == "tool_call" else []
         given = set()
         for c in calls:
             if c["tool"] == "report_result_files":
-                try:
-                    given |= set(repair.load_args(c.get("arguments_json") or "{}").get("files") or [])
-                except (ValueError, AttributeError):
-                    pass
+                args = repair.load_args(c.get("arguments_json") or "{}")
+                for f in (args.get("files") or []) if isinstance(args, dict) else []:
+                    given.add(f.get("path") if isinstance(f, dict) else f)  # OS3: {node_id, path, deliverToUser}
         missing = [f for f in new if f not in given]
         if not missing:
             return d
+        spec = next((t.get("function", t) for t in self.tools if t.get("function", t).get("name") == "report_result_files"), {})
+        items = (((spec.get("parameters") or {}).get("properties") or {}).get("files") or {}).get("items") or {}
+        if items.get("type") == "object":
+            node = repair.local_node(self.node_src)
+            if not node:
+                self.ev("images_not_handed_over", "no node id for this machine in the node list", "warn")
+                return d
+            files = [{"node_id": node, "path": f, "deliverToUser": True} for f in missing]
+        else:
+            files = missing
         self.ev("images_handed_over", f"{len(missing)} generated image(s) added to report_result_files")
         return {"kind": "tool_call", "content": "", "calls": calls + [
-            {"tool": "report_result_files", "arguments_json": json.dumps({"files": missing})}]}
+            {"tool": "report_result_files", "arguments_json": json.dumps({"files": files})}]}
 
     def fallback_model(self, err=None):
         if err is not None and err.plan:

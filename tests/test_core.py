@@ -548,6 +548,18 @@ class CodexImagesTest(unittest.TestCase):
             self.assertEqual(json.loads(msg["tool_calls"][0]["function"]["arguments"])["files"], [png])
             given = decision(("report_result_files", {"files": [png]}))
             self.assertEqual(len(t.to_message(json.dumps(given))[0]["tool_calls"]), 1)  # already handed over
+        os3_files = {"type": "function", "function": {"name": "report_result_files", "parameters": {"type": "object", "properties": {
+            "files": {"type": "array", "items": {"type": "object", "properties": {"node_id": {"type": "string"}, "path": {"type": "string"},
+                                                                                "deliverToUser": {"type": "boolean"}}}}}}}}
+        real = engine.Turn(config.load(), dict(body, tools=tools + [os3_files], messages=[
+            {"role": "system", "content": "You are a worker agent in OS3. " + SYSTEM}, body["messages"][1]]), lambda: True)
+        real.tid = "T1"
+        with mock.patch.dict(os.environ, {"CODEX_HOME": home}):
+            msg, _ = real.to_message(json.dumps({"kind": "final", "calls": [], "content": "done"}))
+            f = json.loads(msg["tool_calls"][0]["function"]["arguments"])["files"]
+            self.assertEqual(f, [{"node_id": NODE_A, "path": png, "deliverToUser": True}])  # default node when hostname unknown
+            own = decision(("report_result_files", {"files": [{"node_id": NODE_A, "path": png, "deliverToUser": True}]}))
+            self.assertEqual(len(real.to_message(json.dumps(own))[0]["tool_calls"]), 1)  # the model's own objects: no crash
         bad = decision(("image_generate", {"prompt": "apple"}))
         self.assertTrue(repair.decision_problems(bad, tools, SYSTEM, own_images=True))
         self.assertFalse(repair.decision_problems(bad, tools, SYSTEM))  # Claude: OS3's tool is the only way

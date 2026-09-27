@@ -207,9 +207,9 @@ IMAGE_GUIDE = (
     "Creating images: you have your own built-in image generation, and it is free for the user. When the task "
     "asks for an image (draw, generate, make a picture, edit a photo), create it with your built-in image "
     "generation. NEVER call the application's image_generate tool: it needs a paid provider the user does not "
-    "have. Your image tool saves the image on the user's device and tells you its file path. Then give it to "
-    "the user: call report_result_files with {\"files\": [\"<that path>\"]} and say in your final answer what "
-    "you made.")
+    "have. Your image tool saves the image on this machine and tells you its file path. Then give it to the "
+    "user: call report_result_files with that file (its path on this machine's node, deliverToUser true, in "
+    "the format the tool describes) and say in your final answer what you made.")
 
 
 def flatten(messages, tools, images=None, header=True, all_messages=None, own_images=False):

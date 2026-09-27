@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.11 (2026-09-27)
+- **Fix for 0.4.10:** workers could fail at the very end with "unhashable type: 'dict'" when they reported their
+  result files. OS3 describes each file as an object (node, path, deliver to user); the router now reads and writes
+  that format, and handing over generated images can never fail a task anymore.
+
 ## 0.4.10 (2026-09-27)
 - **Generated images always reach you.** If the model makes an image but forgets to hand it to OS3, the router now
   hands it over itself. Editing images works too: send rabbit a photo and ask for a change.

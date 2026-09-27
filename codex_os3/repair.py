@@ -47,6 +47,22 @@ def fix_node_id(args, tool, prompt):
     return args
 
 
+def local_node(prompt):
+    """The node id of this machine (where Codex saves generated images), from rabbit's node list:
+    matched by hostname, else the default node, else the only one. None when unknown."""
+    import socket
+    me = socket.gethostname().split(".")[0].lower()
+    nodes = [(m.group(1), m.group(2), (re.search(r"<hostname>([^<]+)</hostname>", m.group(3)) or [None, ""])[1])
+             for m in re.finditer(r'<node id="([^"]+)"([^>]*)>(.*?)</node>', prompt or "", re.S)]
+    for nid, _, host in nodes:
+        if host and host.split(".")[0].lower() == me:
+            return nid
+    for nid, attrs, _ in nodes:
+        if 'default="true"' in attrs:
+            return nid
+    return nodes[0][0] if len(nodes) == 1 else None
+
+
 DLAM_SCRIPTS = ("probe.py", "capture.py", "act.py")
 
 
