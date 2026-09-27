@@ -160,11 +160,13 @@ class Service(unittest.TestCase):
         self.assertIn("not_found_check", kinds)
 
     def test_hang_is_killed(self):
-        t = time.time()
+        t = time.monotonic()
         with self.assertRaises(urllib.error.HTTPError) as e:
             self.post({"messages": [{"role": "user", "content": "FAKE_HANG"}]}, timeout=60)
         self.assertEqual(e.exception.code, 502)
-        self.assertLess(time.time() - t, 30)
+        # Two failed attempts and Windows process teardown can take over 30 seconds.
+        # Still require a router error well before the client's 60-second timeout.
+        self.assertLess(time.monotonic() - t, 45)
 
     def test_invalid_args_do_not_break_the_reply(self):
         d = self.post({"tools": WEATHER, "messages": [{"role": "user", "content": "FAKE_BADJSON"}]})
