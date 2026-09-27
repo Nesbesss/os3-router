@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.4.4 (2026-09-27)
+- **Windows:** no more empty windows popping up about every 30 seconds while the OS3 Router app or dashboard is open. The router's Codex and Claude Code sign-in checks now run in the background without opening a window, so they no longer interrupt your typing.
+
 ## 0.4.3 (2026-09-27)
 - **Windows tray icon:** starts 20 seconds after sign-in and retries if startup fails. Startup errors are saved to a log, and setup continues if the icon cannot start immediately.
 
