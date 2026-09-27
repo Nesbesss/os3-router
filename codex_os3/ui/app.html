@@ -150,6 +150,93 @@ body.native .side { padding-top: 46px; } body.native main { padding-top: 40px; }
 #whatsnew h1 { font-size: 32px; margin: 4px 0 18px; } #whatsnew h3 { font-size: 14px; color: var(--ink-3); margin: 24px 0 8px; font-weight: 600; }
 #whatsnew ul { padding-left: 20px; margin: 0; } #whatsnew li { margin: 8px 0; line-height: 1.55; }
 #whatsnew code { background: var(--soft); border-radius: 5px; padding: 0 5px; font-size: 13px; }
+#whatsnew.big .box { max-width: 680px; } #whatsnew.big > .box > .muted, #whatsnew.big #wnt { display: none; }
+#wnfx { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 9; }
+/* 0.5 celebration (the big update): scoped under .cel */
+#whatsnew .cel { --warm: #ff7a45; --gold: #f5b000; position: relative; }
+#whatsnew .cel .kicker { display: inline-flex; gap: 8px; align-items: center; background: var(--accent-soft); color: var(--accent); font-weight: 650;
+  padding: 5px 12px; border-radius: 99px; font-size: 13px; }
+#whatsnew .cel .big { font-size: 64px; font-weight: 800; letter-spacing: -.03em; line-height: 1; margin: 18px 0 6px; }
+#whatsnew .cel .big .ver { background: linear-gradient(90deg, var(--accent), var(--warm), var(--gold)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+#whatsnew .cel .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; margin-top: 26px; }
+#whatsnew .cel .feat { background: var(--card); border-radius: 18px; padding: 18px 20px; box-shadow: var(--shadow); opacity: 0; transform: translateY(18px) scale(.98); }
+#whatsnew .cel.play .feat { animation: wn-in .6s var(--ease) forwards; }
+#whatsnew .cel .feat .ic { font-size: 30px; display: inline-block; }
+#whatsnew .cel .feat h3 { margin: 8px 0 4px; font-size: 17px; color: var(--ink); font-weight: 700; }
+#whatsnew .cel .feat p { margin: 0; color: var(--ink-2); }
+#whatsnew .cel .feat .num { font-weight: 800; color: var(--accent); }
+#whatsnew .cel.play .feat:nth-child(1) { animation-delay: .5s }
+#whatsnew .cel.play .feat:nth-child(2) { animation-delay: .65s }
+#whatsnew .cel.play .feat:nth-child(3) { animation-delay: .8s }
+#whatsnew .cel.play .feat:nth-child(4) { animation-delay: .95s }
+#whatsnew .cel.play .feat:nth-child(1) .ic { animation: zoom 1.2s 1s var(--ease) both; }
+#whatsnew .cel.play .feat:nth-child(2) .ic { animation: shrink 1.4s 1.1s var(--ease) both; }
+#whatsnew .cel.play .feat:nth-child(3) .ic { animation: swap 1.6s 1.2s ease-in-out both; }
+#whatsnew .cel.play .feat:nth-child(4) .ic { animation: spin 1.2s 1.3s var(--ease) both; }
+@keyframes wn-in { to { opacity: 1; transform: none; } }
+#whatsnew .cel { position: relative; }
+#whatsnew .cel .glow { position: absolute; z-index: -1; top: -60px; left: -80px; width: 420px; height: 300px; border-radius: 50%; filter: blur(60px); opacity: .35;
+  background: radial-gradient(circle at 30% 40%, var(--accent), transparent 60%), radial-gradient(circle at 70% 60%, var(--warm), transparent 55%);
+  animation: wn-drift 9s ease-in-out infinite alternate; }
+@keyframes wn-drift { to { transform: translate(60px, 30px) scale(1.15); } }
+#whatsnew .cel .herorow { display: flex; align-items: flex-end; gap: 6px; }
+#whatsnew .cel .verwrap { position: relative; display: inline-block; }
+#whatsnew .cel .spark { position: absolute; width: 18px; fill: var(--gold); animation: wn-twinkle 2.4s ease-in-out infinite both; }
+#whatsnew .cel .spark.s1 { top: -14px; right: -18px; }
+#whatsnew .cel .spark.s2 { top: 8px; left: -16px; width: 12px; animation-delay: .8s; fill: var(--accent); }
+#whatsnew .cel .spark.s3 { bottom: -6px; right: 4px; width: 10px; animation-delay: 1.5s; fill: var(--warm); }
+@keyframes wn-twinkle { 0%, 100% { transform: scale(.3) rotate(0); opacity: .2 } 50% { transform: scale(1) rotate(45deg); opacity: 1 } }
+#whatsnew .cel .popper { width: 92px; flex: none; margin-bottom: -8px; overflow: visible; }
+#whatsnew .cel .popper .cone { transform-origin: 20% 90%; }
+#whatsnew .cel.play .popper .cone { animation: wn-shake .22s ease-in-out 5 alternate; }
+@keyframes wn-shake { from { transform: rotate(-6deg) } to { transform: rotate(6deg) } }
+#whatsnew .cel .popper .streamers path { stroke-dasharray: 60; }
+#whatsnew .cel .popper .streamers, #whatsnew .cel .popper .dots { opacity: 1; }
+#whatsnew .cel .popper:not(.popped) .streamers, #whatsnew .cel .popper:not(.popped) .dots { opacity: 0; }
+#whatsnew .cel .popper.popped .streamers path { animation: wn-draw .5s var(--ease) both; }
+#whatsnew .cel .popper.popped .dots { animation: wn-pop .5s var(--ease) both; transform-origin: 60% 50%; }
+#whatsnew .cel .popper.popped .cone { animation: wn-kick .35s var(--ease); }
+@keyframes wn-draw { from { stroke-dashoffset: 60 } to { stroke-dashoffset: 0 } }
+@keyframes wn-pop { from { transform: scale(.2); opacity: 0 } to { transform: none; opacity: 1 } }
+@keyframes wn-kick { 40% { transform: rotate(-14deg) translate(-4px, 4px) } }
+#whatsnew .cel .ico { width: 60px; height: 60px; overflow: visible; display: block; }
+#whatsnew .cel .tile { width: 76px; height: 76px; border-radius: 20px; display: grid; place-items: center; margin-bottom: 4px; }
+#whatsnew .cel .t-blue { background: linear-gradient(145deg, var(--accent-soft), transparent); }
+#whatsnew .cel .t-green { background: linear-gradient(145deg, var(--good-soft), transparent); }
+#whatsnew .cel .t-violet { background: linear-gradient(145deg, color-mix(in srgb, #8b5cf6 22%, transparent), transparent); }
+#whatsnew .cel .t-pink { background: linear-gradient(145deg, color-mix(in srgb, #e04e9a 20%, transparent), transparent); }
+#whatsnew .cel .speedo .lap { stroke-dasharray: 100; stroke-dashoffset: 0; }
+#whatsnew .cel.play .speedo .lap { animation: wn-lap 1.1s .9s cubic-bezier(.6, 0, .2, 1) both; }
+@keyframes wn-lap { from { stroke-dashoffset: 100 } to { stroke-dashoffset: 0 } }
+#whatsnew .cel .speedo .hand { transform-origin: 36px 40px; transform: rotate(720deg); }
+#whatsnew .cel.play .speedo .hand { animation: wn-whip 1.1s .9s cubic-bezier(.6, 0, .2, 1) both; }
+@keyframes wn-whip { from { transform: rotate(0) } to { transform: rotate(720deg) } }
+#whatsnew .cel.play .speedo .zap { animation: wn-zap .5s 1.9s var(--ease) both; transform-origin: 36px 40px; }
+@keyframes wn-zap { from { transform: scale(.2); opacity: 0 } 70% { transform: scale(1.15) } to { transform: none; opacity: 1 } }
+#whatsnew .cel .speedo .streaks line { animation: wn-streak 1.2s linear infinite; }
+#whatsnew .cel .speedo .streaks line:nth-child(2) { animation-delay: .4s }
+#whatsnew .cel .speedo .streaks line:nth-child(3) { animation-delay: .8s }
+@keyframes wn-streak { from { transform: translateX(6px); opacity: 0 } 25% { opacity: 1 } to { transform: translateX(-10px); opacity: 0 } }
+#whatsnew .cel .cache .ring { stroke-dasharray: 92 100; }
+#whatsnew .cel.play .cache .ring { animation: wn-fill92 1.6s 1s var(--ease) both; }
+@keyframes wn-fill92 { from { stroke-dasharray: 0 100 } to { stroke-dasharray: 92 100 } }
+#whatsnew .cel .relay .r1 { stroke-dasharray: 100; animation: wn-empty 4s ease-in-out infinite; }
+@keyframes wn-empty { 0% { stroke-dashoffset: 0 } 40%, 100% { stroke-dashoffset: 100 } }
+#whatsnew .cel .relay .r2 { stroke-dasharray: 100; animation: wn-full 4s ease-in-out infinite; }
+@keyframes wn-full { 0%, 50% { stroke-dashoffset: 100 } 80%, 100% { stroke-dashoffset: 0 } }
+#whatsnew .cel .relay .spark2 { offset-path: path("M24 22 Q36 6 48 22"); offset-rotate: 0deg; animation: wn-hop2 4s ease-in-out infinite; }
+@keyframes wn-hop2 { 0%, 38% { offset-distance: 0%; opacity: 0 } 42% { opacity: 1 } 62% { offset-distance: 100%; opacity: 1 } 70%, 100% { offset-distance: 100%; opacity: 0 } }
+#whatsnew .cel .relay .n2 { animation: wn-lit 4s ease-in-out infinite; transform-origin: 54px 36px; }
+@keyframes wn-lit { 0%, 60% { transform: none } 72% { transform: scale(1.3) } 84%, 100% { transform: none } }
+#whatsnew .cel .canvas .wipe { transform-box: fill-box; transform-origin: left; }
+#whatsnew .cel.play .canvas .wipe { animation: wn-wipe 1.5s 1.1s ease-in-out both; }
+@keyframes wn-wipe { from { transform: scaleX(0) } to { transform: scaleX(1) } }
+#whatsnew .cel .canvas .brush { transform: translate(70px, 20px); opacity: 0; }
+#whatsnew .cel.play .canvas .brush { animation: wn-sweep 1.5s 1.1s ease-in-out both; }
+@keyframes wn-sweep { 0% { transform: translate(8px, 44px) rotate(-10deg); opacity: 1 } 25% { transform: translate(22px, 26px) rotate(10deg) }
+  50% { transform: translate(36px, 48px) rotate(-10deg) } 75% { transform: translate(52px, 28px) rotate(10deg) } 92% { transform: translate(66px, 40px); opacity: 1 } 100% { transform: translate(70px, 20px); opacity: 0 } }
+#whatsnew .cel .canvas .sparkle { transform-origin: 60px 10px; animation: wn-twinkle 2.2s 2.7s ease-in-out infinite both; }
+@media (prefers-reduced-motion: reduce) { #whatsnew .cel *, #whatsnew .cel *::before, #whatsnew .cel *::after { animation: none !important; transition: none !important; } #whatsnew .cel .feat { opacity: 1; transform: none; } #whatsnew .cel .popper .streamers, #whatsnew .cel .popper .dots { opacity: 1 !important; } }
 
 /* motion */
 :root { --ease: cubic-bezier(.2, .8, .2, 1); }
@@ -192,6 +279,7 @@ input[type=range]::-moz-range-thumb { width: 22px; height: 22px; border-radius: 
 </style>
 </head>
 <body>
+<canvas id="wnfx" aria-hidden="true"></canvas>
 <aside class="side" aria-label="Sections">
   <div class="brand"><svg viewBox="0 0 1024 1024" aria-hidden="true"><rect width="1024" height="1024" rx="220" fill="#1b2340"/><path d="M250 330 L430 512 L250 694" stroke="#fff" stroke-width="80" fill="none" stroke-linecap="round" stroke-linejoin="round"/><path d="M520 694 H640 Q700 694 740 630 L800 520 M640 694 Q700 694 740 758 L800 860" stroke="#6f8cff" stroke-width="64" fill="none" stroke-linecap="round"/></svg><span>OS3 Router</span></div>
   <button class="nav" data-v="home"><svg viewBox="0 0 24 24"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg><span class="lbl">Home</span></button>
@@ -206,7 +294,66 @@ input[type=range]::-moz-range-thumb { width: 22px; height: 22px; border-radius: 
 </aside>
 <main id="main"><div class="wrap" id="view"></div></main>
 <div id="toast" role="status"></div>
-<div id="whatsnew" role="dialog" aria-modal="true" aria-labelledby="wnt" hidden><div class="box"><p class="muted" style="margin:0">OS3 Router was updated</p><h1 id="wnt">What's new</h1><div id="wnb"></div><button class="btn primary big" id="wnc" style="margin-top:28px">Continue</button></div></div>
+<div id="whatsnew" role="dialog" aria-modal="true" aria-labelledby="wnt" hidden><div class="box"><p class="muted" style="margin:0">OS3 Router was updated</p><h1 id="wnt">What's new</h1><div class="cel" id="wncel" hidden><div class="glow" aria-hidden="true"></div>
+  <span class="kicker"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M8 1l1.8 4.2L14 7l-4.2 1.8L8 13l-1.8-4.2L2 7l4.2-1.8z" fill="currentColor"/></svg> OS3 Router was updated</span>
+  <div class="herorow">
+    <div class="big">Welcome to <span class="verwrap"><span class="ver" id="wncnt">0.4</span>
+      <svg class="spark s1" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 0l2.6 9.4L24 12l-9.4 2.6L12 24l-2.6-9.4L0 12l9.4-2.6z"/></svg>
+      <svg class="spark s2" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 0l2.6 9.4L24 12l-9.4 2.6L12 24l-2.6-9.4L0 12l9.4-2.6z"/></svg>
+      <svg class="spark s3" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 0l2.6 9.4L24 12l-9.4 2.6L12 24l-2.6-9.4L0 12l9.4-2.6z"/></svg></span></div>
+    <svg class="popper" id="wnpop" viewBox="0 0 120 120" aria-hidden="true">
+      <defs><linearGradient id="wn-cone" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#ff7a45"/><stop offset="1" stop-color="#f5b000"/></linearGradient></defs>
+      <g class="streamers" fill="none" stroke-width="4" stroke-linecap="round">
+        <path d="M62 52 C70 30, 60 22, 74 10" stroke="#3d63f0"/><path d="M68 58 C86 50, 90 36, 108 34" stroke="#e04e9a"/>
+        <path d="M66 55 C80 42, 92 44, 100 18" stroke="#1e9a55"/><path d="M60 50 C58 34, 46 30, 48 12" stroke="#f5b000"/></g>
+      <g class="dots"><circle cx="86" cy="22" r="4" fill="#3d63f0"/><circle cx="100" cy="50" r="3.5" fill="#f5b000"/><circle cx="58" cy="20" r="3" fill="#e04e9a"/>
+        <circle cx="110" cy="28" r="2.5" fill="#1e9a55"/><rect x="74" y="30" width="7" height="4" rx="1" fill="#ff7a45" transform="rotate(30 77 32)"/></g>
+      <g class="cone"><path d="M14 106 L50 44 L76 70 Z" fill="url(#wn-cone)"/>
+        <path d="M26 86 L58 58 M36 98 L66 70 M20 96 L52 50" stroke="#fff" stroke-opacity=".55" stroke-width="5" stroke-linecap="round"/>
+        <ellipse cx="63" cy="57" rx="18" ry="7" transform="rotate(45 63 57)" fill="#ffb347"/></g>
+    </svg>
+  </div>
+  <p class="muted" style="font-size:16px;margin:0">The biggest update yet. Here's what changed.</p>
+  <div class="grid">
+    <div class="feat"><div class="tile t-blue"><svg class="ico speedo" viewBox="0 0 72 72" aria-hidden="true">
+        <g class="streaks" stroke="var(--accent)" stroke-width="3" stroke-linecap="round"><line x1="3" y1="30" x2="13" y2="30"/><line x1="1" y1="40" x2="9" y2="40"/><line x1="4" y1="50" x2="12" y2="50"/></g>
+        <rect x="32" y="7" width="8" height="6" rx="2" fill="var(--ink-2)"/><line x1="52" y1="15" x2="56" y2="11" stroke="var(--ink-2)" stroke-width="4" stroke-linecap="round"/>
+        <circle cx="36" cy="40" r="23" fill="var(--card)" stroke="var(--line)" stroke-width="4"/>
+        <circle class="lap" cx="36" cy="40" r="23" fill="none" stroke="var(--accent)" stroke-width="4" stroke-linecap="round" transform="rotate(-90 36 40)" pathLength="100"/>
+        <path class="zap" d="M39 25 L28 42 H36 L33 55 L45 37 H37 Z" fill="var(--gold)" stroke="#e29400" stroke-width="1.8" stroke-linejoin="round"/>
+        <line class="hand" x1="36" y1="40" x2="36" y2="22" stroke="var(--ink)" stroke-width="2.5" stroke-linecap="round"/>
+        <circle cx="36" cy="40" r="2.6" fill="var(--ink)"/></svg></div>
+      <h3>Up to <span class="num">3×</span> faster</h3><p>One Codex stays running instead of starting for every message. Follow-up replies in about 2 seconds.</p></div>
+    <div class="feat"><div class="tile t-green"><svg class="ico cache" viewBox="0 0 72 72" aria-hidden="true">
+        <circle cx="36" cy="36" r="27" fill="none" stroke="var(--line)" stroke-width="8"/>
+        <circle class="ring" cx="36" cy="36" r="27" fill="none" stroke="var(--good)" stroke-width="8" stroke-linecap="round" transform="rotate(-90 36 36)" pathLength="100"/>
+        <text class="pct" x="36" y="41" text-anchor="middle" font-size="16" font-weight="800" fill="var(--ink)">92%</text>
+        <text x="36" y="53" text-anchor="middle" font-size="7.5" font-weight="700" fill="var(--ink-3)" letter-spacing=".5">CACHED</text></svg></div>
+      <h3>Up to <span class="num">13×</span> less usage in chat</h3><p>Your chat keeps its conversation, so almost everything is reused from the cache. Your limits last a lot longer.</p></div>
+    <div class="feat"><div class="tile t-violet"><svg class="ico relay" viewBox="0 0 72 72" aria-hidden="true">
+        <circle cx="18" cy="36" r="14" fill="var(--card)" stroke="var(--line)" stroke-width="4"/>
+        <circle class="r1" cx="18" cy="36" r="14" fill="none" stroke="var(--warm)" stroke-width="4" stroke-linecap="round" transform="rotate(-90 18 36)" pathLength="100"/>
+        <text x="18" y="41" text-anchor="middle" font-size="14" font-weight="800" fill="var(--ink-2)">1</text>
+        <circle cx="54" cy="36" r="14" fill="var(--card)" stroke="var(--line)" stroke-width="4"/>
+        <circle class="r2" cx="54" cy="36" r="14" fill="none" stroke="var(--accent)" stroke-width="4" stroke-linecap="round" transform="rotate(-90 54 36)" pathLength="100"/>
+        <text class="n2" x="54" y="41" text-anchor="middle" font-size="14" font-weight="800" fill="var(--accent)">2</text>
+        <path class="hop" d="M24 22 Q36 6 48 22" fill="none" stroke="var(--ink-3)" stroke-width="2.5" stroke-dasharray="3 4" stroke-linecap="round"/>
+        <path class="spark2" d="M36 6l1.8 4.6L42 12l-4.2 1.4L36 18l-1.8-4.6L30 12l4.2-1.4z" fill="var(--gold)"/></svg></div>
+      <h3>Two accounts, no waiting</h3><p>Add a second ChatGPT account. When one runs out, the router moves on by itself, and back when it resets.</p></div>
+    <div class="feat"><div class="tile t-pink"><svg class="ico canvas" viewBox="0 0 72 72" aria-hidden="true">
+        <defs><clipPath id="wn-frame"><rect x="8" y="14" width="56" height="44" rx="7"/></clipPath>
+          <mask id="wn-reveal"><rect class="wipe" x="8" y="10" width="60" height="52" fill="#fff"/></mask></defs>
+        <rect x="8" y="14" width="56" height="44" rx="7" fill="var(--card)"/>
+        <g clip-path="url(#wn-frame)" mask="url(#wn-reveal)">
+          <rect x="8" y="14" width="56" height="44" fill="#bcd6ff"/>
+          <circle cx="50" cy="26" r="6" fill="var(--gold)"/>
+          <path d="M8 58 L26 34 L37 46 L45 37 L64 58 Z" fill="var(--good)"/>
+          <path d="M8 58 L26 34 L31 40 L22 58 Z" fill="#157a43"/></g>
+        <rect x="8" y="14" width="56" height="44" rx="7" fill="none" stroke="var(--ink-2)" stroke-width="3"/>
+        <g class="brush"><path d="M0 0 L7 -12 L11 -10 L4 2 Z" fill="#8a5a2b"/><path d="M0 0 L4 2 L1 7 Q-3 9 -3 5 Z" fill="#e04e9a"/></g>
+        <path class="sparkle" d="M60 4l1.8 4.6L66 10l-4.2 1.4L60 16l-1.8-4.6L54 10l4.2-1.4z" fill="#e04e9a"/></svg></div>
+      <h3>Images on your plan</h3><p>Rabbit makes and edits pictures with Codex. No paid image provider needed.</p></div>
+  </div><h3 style="margin-top:34px">All changes</h3></div><div id="wnb"></div><button class="btn primary big" id="wnc" style="margin-top:28px">Continue</button></div></div>
 <div id="lightbox" hidden><img alt=""></div>
 
 <script>
@@ -498,10 +645,68 @@ async function whatsNew() {
       return out.map(t => "<li>" + esc(t).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/`([^`]+)`/g, "<code>$1</code>") + "</li>").join(""); };
     $("#wnt").textContent = "What's new in " + w.version;
     $("#wnb").innerHTML = w.sections.map(x => `<h3>${esc(x.title)}</h3><ul>${items(x.body)}</ul>`).join("");
-    $("#whatsnew").hidden = false; $("#wnc").focus();
+    const big = /^0\.5\.0\b/.test(w.version);  // the big update gets the celebration; later ones the plain list
+    $("#whatsnew").classList.toggle("big", big); $("#wncel").hidden = !big; $("#wnc").textContent = big ? "Let's go" : "Continue";
+    $("#whatsnew").hidden = false; $("#whatsnew").scrollTop = 0; $("#wnc").focus({ preventScroll: true });
+    if (big) celebrate();
   } catch (e) {}
 }
-$("#wnc").onclick = async () => { $("#whatsnew").hidden = true; try { await post("whatsnew/seen"); } catch (e) {} };
+$("#wnc").onclick = async (e) => {
+  if ($("#whatsnew").classList.contains("big")) {
+    const r = e.currentTarget.getBoundingClientRect(); confetti(r.left + r.width / 2, r.top, -Math.PI / 2, 60, 1.6, .7);
+    await new Promise(z => setTimeout(z, 500));
+  }
+  $("#whatsnew").hidden = true; try { await post("whatsnew/seen"); } catch (e) {} };
+
+// ---- 0.5 celebration: version counter, party popper, confetti (skipped with reduced motion) ----
+const CALM = matchMedia("(prefers-reduced-motion: reduce)").matches;
+const FX = $("#wnfx"), FXC = FX.getContext("2d"), FXCOL = ["#3d63f0", "#ff7a45", "#f5b000", "#1e9a55", "#e04e9a", "#6f8cff"];
+let fxBits = [], fxRaf = 0;
+function fxSize() { FX.width = innerWidth * devicePixelRatio; FX.height = innerHeight * devicePixelRatio; }
+addEventListener("resize", fxSize); fxSize();
+function confetti(x, y, dir, n = 90, spread = .9, speed = 1) {
+  if (CALM) return;
+  const d = devicePixelRatio;
+  for (let i = 0; i < n; i++) {
+    const a = dir + (Math.random() - .5) * spread, v = (9 + Math.random() * 11) * speed;
+    fxBits.push({ x: x * d, y: y * d, vx: Math.cos(a) * v, vy: Math.sin(a) * v, r: Math.random() * 6.28, vr: (Math.random() - .5) * .3,
+      w: 6 + Math.random() * 6, h: 3 + Math.random() * 5, c: FXCOL[i % FXCOL.length], life: 1, t: Math.random() * 6.28,
+      k: ["rect", "rect", "dot", "star", "ribbon"][i % 5] });
+  }
+  if (!fxRaf) fxRaf = requestAnimationFrame(fxTick);
+}
+function fxStar(r) { FXC.beginPath(); for (let i = 0; i < 10; i++) { const a = i * Math.PI / 5, q = i % 2 ? r * .45 : r; FXC.lineTo(Math.cos(a) * q, Math.sin(a) * q); } FXC.closePath(); FXC.fill(); }
+function fxTick() {
+  const d = devicePixelRatio; FXC.clearRect(0, 0, FX.width, FX.height);
+  fxBits = fxBits.filter(b => b.life > 0 && b.y < FX.height + 40);
+  for (const b of fxBits) {
+    b.vy += .3; b.vx *= .985; b.vy *= .995; b.x += b.vx + Math.sin(b.t) * .8; b.y += b.vy; b.r += b.vr; b.t += .15; b.life -= .005;
+    FXC.save(); FXC.translate(b.x, b.y); FXC.rotate(b.r); FXC.globalAlpha = Math.max(b.life, 0); FXC.fillStyle = FXC.strokeStyle = b.c;
+    const flip = Math.cos(b.t);  // paper flutter
+    if (b.k === "dot") { FXC.beginPath(); FXC.arc(0, 0, 3.2 * d, 0, 6.28); FXC.fill(); }
+    else if (b.k === "star") fxStar(5.5 * d);
+    else if (b.k === "ribbon") { FXC.lineWidth = 2.6 * d; FXC.beginPath(); FXC.moveTo(-9 * d, 0); FXC.bezierCurveTo(-4 * d, -7 * d * flip, 4 * d, 7 * d * flip, 9 * d, 0); FXC.stroke(); }
+    else FXC.fillRect(-b.w * d / 2, -b.h * d / 2 * flip, b.w * d, b.h * d * flip);
+    FXC.restore();
+  }
+  fxRaf = fxBits.length ? requestAnimationFrame(fxTick) : 0;
+}
+function celebrate() {
+  const box = $("#wncel"), pop = $("#wnpop"), el = $("#wncnt"), pct = $("#wncel .pct");
+  box.classList.remove("play"); pop.classList.remove("popped"); void box.offsetWidth; box.classList.add("play");
+  const done = () => {
+    el.textContent = "0.5"; pop.classList.add("popped");
+    const r = pop.getBoundingClientRect(); confetti(r.left + r.width * .55, r.top + r.height * .45, -Math.PI / 4, 70, 1.3, .8);
+    confetti(0, innerHeight, -Math.PI / 3); confetti(innerWidth, innerHeight, -2 * Math.PI / 3);
+  };
+  pct.textContent = CALM ? "92%" : "0%";
+  if (CALM) return done();
+  setTimeout(() => { const t0 = performance.now(); const up = (t) => { const q = Math.min((t - t0) / 1600, 1);
+    pct.textContent = Math.round(92 * (1 - Math.pow(1 - q, 3))) + "%"; if (q < 1) requestAnimationFrame(up); }; requestAnimationFrame(up); }, 1000);
+  let v = 40; el.textContent = "0.4";
+  const t = setInterval(() => { v++; el.textContent = v < 50 ? "0.4." + (v - 40) : "0.5"; if (v >= 50) { clearInterval(t); done(); } }, 110);
+}
+
 (async () => { await load(); whatsNew(); go((location.hash.slice(1).split("?")[0]) || (S.ob && !S.ob.done ? "setup" : "home")); })();
 </script>
 </body>
