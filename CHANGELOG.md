@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.4.15 (unreleased)
+- **Check and retry router updates from Settings.** Find new updates checks GitHub right away. When a newer release is available, Install update now asks the router to test and install it, even if automatic updates are turned off or the last attempt failed. Settings shows whether the update is waiting, installing, failed, or running on the new version. Installer-made Mac, Windows, and Linux installs support this; a source checkout still updates with git.
+
 ## 0.4.14 (2026-09-29)
 - **Keep OS3 running while the computer is idle.** Turn on Prevent idle sleep in the app's Settings, the Mac menu bar, or the Windows tray. It is off by default. The screen may still turn off; choosing Sleep or closing a laptop lid still pauses OS3.
 
