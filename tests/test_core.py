@@ -244,6 +244,26 @@ class Watchdog(unittest.TestCase):
         self.assertEqual(idle_limit({"hang_idle_s": 90}, "high"), 180)
         self.assertEqual(round(idle_limit({"hang_idle_s": 90}, "xhigh")), 300)
 
+    def test_background_calls_get_the_long_hang_limit(self):
+        # issue #18: low-effort memory/soul merges write 10k+ tokens as one message and codex
+        # prints nothing until it is done; a 90s idle limit killed them twice in a row
+        from codex_os3.codex_runner import idle_limit
+        cfg = {"hang_idle_s": 90}
+        self.assertEqual(round(idle_limit(cfg, "low", "background")), 300)
+        self.assertEqual(round(idle_limit(cfg, "high", "background")), 300)
+        self.assertEqual(idle_limit(cfg, "low", "chat"), 90)  # interactive roles keep the fast limit
+        self.assertEqual(idle_limit(cfg, "medium", "worker"), 90)
+        self.assertEqual(idle_limit(cfg, "low"), 90)
+
+    def test_engine_passes_role_to_runner(self):
+        from codex_os3 import codex_runner, engine
+        t = engine.Turn.__new__(engine.Turn)
+        t.cfg, t.model, t.backend, t.schema, t.alive, t.rid, t.role = (
+            {}, "gpt-6-luna-low", "codex", None, lambda: True, None, "background")
+        with mock.patch.object(codex_runner, "run", return_value=("ok", {}, "th", None)) as run,                 mock.patch.object(engine.store, "add_tokens"), mock.patch.object(engine.store, "add_limits"):
+            self.assertEqual(t.codex("p"), ("ok", "th"))
+        self.assertEqual(run.call_args.kwargs["role"], "background")
+
     def test_final_answer_is_quiet(self):
         s = self.snap(last_response={"ago_s": 900, "result": "final", "calls": [], "task": "t"})
         self.assertEqual(self.kinds(s), [])
