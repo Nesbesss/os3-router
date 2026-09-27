@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.4.14 (2026-09-29)
+- **Keep OS3 running while the computer is idle.** Turn on Prevent idle sleep in the app's Settings, the Mac menu bar, or the Windows tray. It is off by default. The screen may still turn off; choosing Sleep or closing a laptop lid still pauses OS3.
+
 ## 0.4.13 (2026-09-29)
 - **Restart confirmation works reliably.** Refreshing the Activity page no longer makes one Restart click open multiple confirmation dialogs.
 
