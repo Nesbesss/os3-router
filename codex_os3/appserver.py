@@ -159,6 +159,7 @@ def run(cfg, prompt, model, schema=None, alive=lambda: True, images=(), resume=N
             turn = srv.request("turn/start", {"threadId": tid, "input": inp, "outputSchema": schema,
                                               "effort": effort, "model": slug})
             msgs, deltas, usage, errs, status = [], [], {}, [], None
+            before = None  # the thread's token total before this turn: usage = the whole turn, not its last model call
             start = last = time.time()
             limit = idle_limit(cfg, effort, role)
             rollout, next_check = None, 0
@@ -183,10 +184,14 @@ def run(cfg, prompt, model, schema=None, alive=lambda: True, images=(), resume=N
                     elif meth == "item/completed" and (p.get("item") or {}).get("type") == "agentMessage":
                         msgs.append(p["item"].get("text", ""))  # all of them, like exec: the first decision wins
                     elif meth == "thread/tokenUsage/updated":
-                        u = (p.get("tokenUsage") or {}).get("last") or {}
-                        usage = {"input_tokens": u.get("inputTokens", 0), "cached_input_tokens": u.get("cachedInputTokens", 0),
-                                 "output_tokens": u.get("outputTokens", 0),
-                                 "reasoning_output_tokens": u.get("reasoningOutputTokens", 0)}
+                        tu = p.get("tokenUsage") or {}
+                        tot, lst = tu.get("total") or {}, tu.get("last") or {}
+                        keys = ("inputTokens", "cachedInputTokens", "outputTokens", "reasoningOutputTokens")
+                        if before is None:
+                            before = {k: tot.get(k, 0) - lst.get(k, 0) for k in keys}
+                        d = {k: tot.get(k, 0) - before[k] for k in keys} if tot else lst
+                        usage = {"input_tokens": d.get("inputTokens", 0), "cached_input_tokens": d.get("cachedInputTokens", 0),
+                                 "output_tokens": d.get("outputTokens", 0), "reasoning_output_tokens": d.get("reasoningOutputTokens", 0)}
                     elif meth == "error" and not p.get("willRetry"):
                         errs.append((p.get("error") or {}).get("message", "error"))
                     elif meth == "turn/completed":

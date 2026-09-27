@@ -19,6 +19,12 @@ def log(msg):
     print(f"{time.strftime('%H:%M:%S')} {msg}", flush=True)
 
 
+def engine_of(cfg):
+    """The Codex engine: "auto" means the long-running app-server, except on Windows (not tested there yet)."""
+    e = cfg.get("engine") or "auto"
+    return ("exec" if os.name == "nt" else "appserver") if e == "auto" else e
+
+
 class Turn:
     """One /v1/chat/completions request."""
 
@@ -168,7 +174,7 @@ class Turn:
             extra["account"] = self.account
             if self.own_images():
                 extra["image_gen"] = True
-        if self.backend == "codex" and self.cfg.get("engine") == "appserver":  # prototype: one long-running codex
+        if self.backend == "codex" and engine_of(self.cfg) == "appserver":  # one long-running codex
             runner = appserver
             if stream and self.stream_sink and not self.streamed and self.role == "chat" and not self.forced \
                     and self.cfg.get("stream_chat"):

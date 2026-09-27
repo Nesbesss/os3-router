@@ -276,7 +276,7 @@ class Watchdog(unittest.TestCase):
         from codex_os3 import codex_runner, engine
         t = engine.Turn.__new__(engine.Turn)
         t.cfg, t.model, t.backend, t.schema, t.alive, t.rid, t.role = (
-            {}, "gpt-6-luna-low", "codex", None, lambda: True, None, "background")
+            {"engine": "exec"}, "gpt-6-luna-low", "codex", None, lambda: True, None, "background")
         with mock.patch.object(codex_runner, "run", return_value=("ok", {}, "th", None)) as run,                 mock.patch.object(engine.store, "add_tokens"), mock.patch.object(engine.store, "add_limits"):
             self.assertEqual(t.codex("p"), ("ok", "th"))
         self.assertEqual(run.call_args.kwargs["role"], "background")

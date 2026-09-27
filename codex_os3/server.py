@@ -191,13 +191,7 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(f"data: {json.dumps(dict(base, choices=[{'index': 0, 'delta': delta, 'finish_reason': fin}]))}\n\n".encode())
             self.wfile.flush()
         if stream and cfg.get("stream_chat"):  # prototype: answer text goes out while it's written
-            delay = float(cfg.get("stream_test_delay") or 0)  # test knob: slow streaming down to see it in OS3's UI
-
-            def sink(text):
-                chunk({"role": "assistant", "content": text} if turn.streamed == text else {"content": text})
-                if delay:
-                    time.sleep(delay)
-            turn.stream_sink = sink
+            turn.stream_sink = lambda text: chunk({"role": "assistant", "content": text} if turn.streamed == text else {"content": text})
         try:
             msg, finish = turn.run()
         except engine.ClientGone:
