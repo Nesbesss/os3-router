@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.4.13 (2026-09-29)
+- **Restart confirmation works reliably.** Refreshing the Activity page no longer makes one Restart click open multiple confirmation dialogs.
+
 ## 0.4.12 (2026-09-29)
 - **More reliable updates on Windows.** A router timeout test now allows extra time for Windows to close processes, so a successful update is less likely to be rejected as a test failure.
 
