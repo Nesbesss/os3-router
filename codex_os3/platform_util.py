@@ -46,6 +46,15 @@ def pid_alive(pid):
         return False
 
 
+def no_window_kwargs():
+    """Windows: run a console program without a console window. The router runs under
+    pythonw.exe (no console), so each console child would otherwise open its own window
+    that flashes up and steals keyboard focus."""
+    if WINDOWS:
+        return {"creationflags": subprocess.CREATE_NO_WINDOW}
+    return {}
+
+
 def popen_group_kwargs():
     """Start a child in its own process group so we can kill it with its children."""
     if WINDOWS:

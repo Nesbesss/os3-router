@@ -58,9 +58,11 @@ def codex_info(cfg=None):
     if not b:
         return info
     try:
-        v = subprocess.run([b, "--version"], capture_output=True, text=True, timeout=15)
+        # polled by the open app/dashboard: without no_window_kwargs each check flashes a console window on Windows
+        v = subprocess.run([b, "--version"], capture_output=True, text=True, timeout=15, **platform_util.no_window_kwargs())
         info["version"] = (v.stdout or v.stderr).strip().split()[-1] if (v.stdout or v.stderr) else None
-        s = subprocess.run([b, "login", "status"], capture_output=True, text=True, timeout=15)
+        s = subprocess.run([b, "login", "status"], capture_output=True, text=True, timeout=15,
+                           **platform_util.no_window_kwargs())
         out = (s.stdout + s.stderr).lower()
         info["logged_in"] = s.returncode == 0 and "not logged in" not in out
         info["login_detail"] = (s.stdout + s.stderr).strip()[:200]
@@ -76,7 +78,8 @@ def claude_info(cfg):
     if not b:
         return info
     try:
-        s = subprocess.run([b, "auth", "status"], capture_output=True, text=True, timeout=20)
+        s = subprocess.run([b, "auth", "status"], capture_output=True, text=True, timeout=20,
+                           **platform_util.no_window_kwargs())
         d = json.loads(s.stdout or "{}")
         info["logged_in"] = bool(d.get("loggedIn"))
         info["detail"] = d.get("authMethod") or ""
