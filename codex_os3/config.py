@@ -30,6 +30,7 @@ DEFAULTS = {
     "watchdog": True,
     "restart_agent": True,    # watchdog may restart a stuck rabbit-agent
     "auto_update": True,      # install new releases from GitHub (tested first, zero downtime)
+    "no_sleep": False,       # opt in to preventing idle system sleep while the router runs
     "codex_images": True,     # workers create images with Codex's own image generation (no paid image provider)
     "fallback": {},           # role -> {model, effort} used while the role's subscription is at its limit
     "share_reports": None,    # anonymous problem reports to the developer: None = not asked yet
