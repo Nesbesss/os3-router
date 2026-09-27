@@ -265,8 +265,23 @@ def handle(method, path, data, q, cfg):
     if method == "GET" and path == "config":
         c = dict(cfg)
         c["sleep_supported"] = sys.platform in sleep_control.SUPPORTED
+        c["lid_supported"] = sys.platform == "darwin"
+        if c["lid_supported"]:
+            try:
+                c["lid_awake"] = sleep_control.lid_awake()
+            except (OSError, subprocess.SubprocessError):
+                c["lid_awake"] = None
         c["jev_key"] = bool(c.get("jev_key"))  # never echo third-party secrets
         return 200, c, J  # api_key is shown: the UI is local-only or key-authenticated
+    if method == "POST" and path == "lid_awake":  # Mac: keep running with the lid closed (asks for the password)
+        if sys.platform != "darwin":
+            return 400, {"error": "only on macOS"}, J
+        try:
+            on = sleep_control.set_lid_awake(bool(data.get("on")))
+        except PermissionError as e:
+            return 400, {"error": str(e)}, J
+        store.event("lid_awake", "this Mac " + ("keeps running with the lid closed" if on else "sleeps again when the lid closes"))
+        return 200, {"on": on}, J
     if method == "POST" and path == "config":
         upd = {k: v for k, v in data.items() if k in EDITABLE}
         if "no_sleep" in upd:

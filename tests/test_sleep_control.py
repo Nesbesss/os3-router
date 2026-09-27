@@ -80,3 +80,32 @@ class SleepSettingAPI(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LidAwakeTest(unittest.TestCase):
+    """Mac: keep running with the lid closed = `pmset disablesleep`, via macOS's own password prompt."""
+    def run_fake(self, pmset_out, osa_rc=0, osa_err=""):
+        calls = []
+
+        def fake(cmd, **kw):
+            calls.append(cmd)
+            out = pmset_out if cmd[0] == "/usr/bin/pmset" else ""
+            return mock.Mock(returncode=osa_rc if cmd[0] == "/usr/bin/osascript" else 0, stdout=out, stderr=osa_err)
+        return calls, fake
+
+    def test_reads_state_and_switches_through_the_password_prompt(self):
+        calls, fake = self.run_fake("System-wide power settings:\n SleepDisabled\t\t1\n")
+        with mock.patch.object(sleep_control.subprocess, "run", side_effect=fake):
+            self.assertTrue(sleep_control.lid_awake())
+            self.assertTrue(sleep_control.set_lid_awake(True))
+        script = calls[1][2]
+        self.assertIn("pmset -a disablesleep 1", script)
+        self.assertIn("with administrator privileges", script)
+
+    def test_cancelled_prompt_changes_nothing(self):
+        calls, fake = self.run_fake(" SleepDisabled\t\t0\n", osa_rc=1, osa_err="execution error: User canceled. (-128)")
+        with mock.patch.object(sleep_control.subprocess, "run", side_effect=fake):
+            self.assertFalse(sleep_control.lid_awake())
+            with self.assertRaises(PermissionError) as e:
+                sleep_control.set_lid_awake(True)
+        self.assertEqual(str(e.exception), "cancelled")

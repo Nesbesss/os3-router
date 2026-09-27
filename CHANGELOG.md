@@ -15,6 +15,7 @@ The biggest update yet.
 - **When OS3 rejects a browser result** as unconfirmed, the worker takes a fresh look and reports again instead of
   giving up.
 - **Token counts on the dashboard are correct** for tasks with several steps (they were shown as running totals).
+- **Mac: keep running with the lid closed** (Settings). macOS asks for your password once to switch it on or off.
 - A new *What's new* screen for this release 🎉
 
 ## 0.4.15 (2026-09-28)

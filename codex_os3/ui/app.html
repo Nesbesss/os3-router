@@ -635,6 +635,7 @@ VIEWS.settings = {static: true, async draw() {
         <div class="row"><button class="btn" id="upcheck">Find new updates</button><button class="btn primary" id="upinstall" hidden>Install update now</button></div>
         <p class="muted" id="upmsg" role="status">Reading update status…</p></div>
       ${CFG.sleep_supported ? sw("no_sleep", "Prevent idle sleep while OS3 runs", "Keeps this computer awake while the router is running. The screen may turn off; closing a laptop lid or choosing Sleep still pauses OS3.") : ""}
+      ${CFG.lid_supported ? `<label class="sw"><input type="checkbox" id="lidawake" ${CFG.lid_awake ? "checked" : ""}><span><b>Keep running with the lid closed</b><span class="muted">OS3 keeps working when you close this MacBook. macOS asks for your password to switch it on or off. The Mac really stays on, also in a bag, and uses battery: best on the charger.</span></span></label>` : ""}
       ${sw("watchdog", "Watch over the OS3 node", "Restarts this computer's OS3 node when it gets stuck.")}
       ${sw("share_reports", "Share problem reports", "Anonymous notes to the developer when something breaks or gets fixed.")}</div>
     <div class="card" style="margin-top:16px"><h2>Connection details</h2>
@@ -651,6 +652,13 @@ VIEWS.settings = {static: true, async draw() {
     UPDATE_BUSY = true; $("#upinstall").disabled = true;
     try { await post("updates/install"); UPDATE_BUSY = false; await refreshUpdates(); }
     catch (e) { UPDATE_BUSY = false; $("#upmsg").textContent = updateError(e); $("#upinstall").disabled = false; }
+  };
+  const lid = $("#lidawake");
+  if (lid) lid.onchange = async () => {
+    const want = lid.checked; lid.disabled = true; toast("macOS asks for your password…");
+    try { const r = await post("lid_awake", {on: want}); lid.checked = r.on; toast(r.on ? "This Mac keeps running with the lid closed" : "This Mac sleeps again when the lid closes"); }
+    catch (err) { lid.checked = !want; toast(/cancel/.test(err.message) ? "Not changed" : "Could not change it: " + err.message.slice(0, 80)); }
+    lid.disabled = false;
   };
   document.querySelectorAll("[data-k]").forEach(i => i.onchange = async () => {
     try { await post("config", {[i.dataset.k]: i.checked}); toast("Saved"); }

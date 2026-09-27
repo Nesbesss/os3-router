@@ -5,6 +5,7 @@ supervisor owns the assertion so it survives HTTP worker reloads.
 """
 import ctypes
 import os
+import re
 import subprocess
 import sys
 
@@ -47,3 +48,24 @@ class IdleSleepInhibitor:
 
     def close(self):
         self.sync(False)
+
+
+# -- Mac: stay awake with the lid closed. macOS sleeps on lid close whatever apps ask for; only the system
+# setting `pmset disablesleep` (admin rights) stops that. It is asked for through macOS's own password prompt.
+
+def lid_awake():
+    """True when this Mac is set to keep running with the lid closed (pmset SleepDisabled 1)."""
+    out = subprocess.run(["/usr/bin/pmset", "-g"], capture_output=True, text=True, timeout=10).stdout
+    m = re.search(r"SleepDisabled\s+(\d)", out)
+    return bool(m and m.group(1) == "1")
+
+
+def set_lid_awake(on):
+    """Switch it on or off; macOS shows its password prompt. -> the new state. PermissionError if cancelled."""
+    what = "keep this Mac running with the lid closed" if on else "let this Mac sleep again when the lid closes"
+    script = (f'do shell script "/usr/bin/pmset -a disablesleep {1 if on else 0}" '
+              f'with prompt "OS3 Router wants to {what}." with administrator privileges')
+    r = subprocess.run(["/usr/bin/osascript", "-e", script], capture_output=True, text=True, timeout=300)
+    if r.returncode:
+        raise PermissionError("cancelled" if "-128" in r.stderr else (r.stderr.strip()[:200] or "failed"))
+    return lid_awake()
