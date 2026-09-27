@@ -64,7 +64,7 @@ def limits(info):
     return rl if rl["primary"] or rl["secondary"] else None
 
 
-def run(cfg, prompt, model, schema=None, alive=lambda: True, images=(), resume=None, keep=False):
+def run(cfg, prompt, model, schema=None, alive=lambda: True, images=(), resume=None, keep=False, role=None):
     """-> (text, usage, session_id, rate_limits). Raises ClientGone, CodexHung, UsageLimit,
     RuntimeError."""
     os.makedirs(WORKDIR, exist_ok=True)
@@ -74,7 +74,7 @@ def run(cfg, prompt, model, schema=None, alive=lambda: True, images=(), resume=N
         if not alive():
             raise ClientGone()
     try:
-        idle = idle_limit(cfg, split_model(model, cfg["effort"])[1])
+        idle = idle_limit(cfg, split_model(model, cfg["effort"])[1], role)
         out, err, thread = _supervise(dict(cfg, hang_idle_s=idle), cmd, message(prompt, images), alive, resume,
                                       cwd=WORKDIR, final='"type":"result"', env=environ(cmd[0]))
     finally:

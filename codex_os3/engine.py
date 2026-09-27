@@ -92,7 +92,7 @@ class Turn:
     def codex(self, prompt, images=(), resume=None, keep=False):
         runner = claude_runner if self.backend == "claude" else codex_runner
         text, usage, thread, limits = runner.run(
-            self.cfg, prompt, self.model, self.schema, self.alive, images, resume, keep)
+            self.cfg, prompt, self.model, self.schema, self.alive, images, resume, keep, role=self.role)
         store.add_tokens(self.rid, usage)
         store.add_limits(limits, self.backend)
         return text, thread

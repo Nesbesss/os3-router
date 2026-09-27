@@ -85,11 +85,19 @@ def build_cmd(cfg, model, schema_file=None, image_files=(), resume=None):
     return cmd + ["--", "-"]
 
 
-def idle_limit(cfg, effort):
+def idle_limit(cfg, effort, role=None):
     """Seconds without output before a run counts as hung. Codex prints nothing while it
     thinks, and higher efforts think longer: killing a run that is still thinking only
-    restarts the work."""
-    return cfg["hang_idle_s"] * {"high": 2, "xhigh": 10 / 3, "max": 10 / 3, "ultra": 10 / 3}.get(effort, 1)
+    restarts the work.
+
+    Background calls (OS3's memory/soul merges, fact extraction) answer with one long
+    message of 10k-27k tokens, and codex emits no event until that message is complete, so
+    even at low effort they are silent for well over 90s while working normally. They get
+    the longest limit; hang_max_s still caps the whole run."""
+    mult = {"high": 2, "xhigh": 10 / 3, "max": 10 / 3, "ultra": 10 / 3}.get(effort, 1)
+    if role == "background":
+        mult = max(mult, 10 / 3)
+    return cfg["hang_idle_s"] * mult
 
 
 RESET_RE = re.compile(r"try again (?:at|in) ([^.\"\\]+)", re.I)
@@ -114,7 +122,7 @@ def last_rate_limits(thread):
     return None
 
 
-def run(cfg, prompt, model, schema=None, alive=lambda: True, images=(), resume=None, keep=False):
+def run(cfg, prompt, model, schema=None, alive=lambda: True, images=(), resume=None, keep=False, role=None):
     """-> (text, usage, thread, rate_limits). Raises ClientGone, CodexHung, UsageLimit,
     RuntimeError."""
     os.makedirs(WORKDIR, exist_ok=True)
@@ -141,7 +149,7 @@ def run(cfg, prompt, model, schema=None, alive=lambda: True, images=(), resume=N
             if not alive():
                 raise ClientGone()
         try:
-            idle = idle_limit(cfg, split_model(model, cfg["effort"])[1])
+            idle = idle_limit(cfg, split_model(model, cfg["effort"])[1], role)
             out, err_lines, thread = _supervise(dict(cfg, hang_idle_s=idle), cmd, prompt, alive, resume)
         finally:
             sem.release()
