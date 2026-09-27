@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.4.12 (2026-09-29)
+- **More reliable updates on Windows.** A router timeout test now allows extra time for Windows to close processes, so a successful update is less likely to be rejected as a test failure.
+
 ## 0.4.11 (2026-09-27)
 - **Fix for 0.4.10:** workers could fail at the very end with "unhashable type: 'dict'" when they reported their
   result files. OS3 describes each file as an object (node, path, deliver to user); the router now reads and writes
