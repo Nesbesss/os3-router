@@ -181,6 +181,23 @@ def handle(method, path, data, q, cfg):
                      "watchdog": wd, "running": running, "model": cfg["model"],
                      "no_sleep": bool(cfg["no_sleep"]), "sleep_supported": sys.platform in sleep_control.SUPPORTED,
                      "endpoint": f"http://localhost:{cfg['port']}/v1"}, J
+    if path == "updates":
+        from . import updater
+        if method == "GET":
+            return 200, updater.update_status(cfg), J
+        if method == "POST":
+            try:
+                return 200, updater.check_now(cfg), J
+            except ValueError as e:
+                return 409, {"error": str(e)}, J
+            except Exception as e:
+                return 502, {"error": f"Could not check for updates: {type(e).__name__}: {e}"[:300]}, J
+    if method == "POST" and path == "updates/install":
+        from . import updater
+        try:
+            return 202, updater.request_update(cfg), J
+        except ValueError as e:
+            return 409, {"error": str(e)}, J
     if method == "GET" and path == "usage":
         return 200, usage(float(q.get("hours", 24))), J
     if method == "GET" and path == "requests":
