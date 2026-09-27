@@ -154,6 +154,9 @@ class Roles(unittest.TestCase):
         self.assertEqual(roles.pick(cfg, "worker", "gpt-6-luna"), "gpt-6-sol-high")
         self.assertEqual(roles.pick(cfg, "chat", "gpt-6-luna"), "gpt-6-luna-medium")
         self.assertEqual(roles.pick(dict(cfg, role_routing=False), "worker", "gpt-5.5"), "gpt-5.5")
+        bg = dict(cfg, roles=dict(cfg["roles"], background={"model": "gpt-6-luna", "effort": "low"}))
+        self.assertEqual(roles.pick(bg, "background", "gpt-6-luna"), "gpt-6-luna-low")
+        self.assertEqual(roles.pick(bg, "background", "gpt-6-luna", images=True), "gpt-6-sol-low")  # OS3's image check
 
     def test_split_effort(self):
         from codex_os3.codex_runner import split_model

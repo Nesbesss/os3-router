@@ -28,7 +28,10 @@ class Turn:
         self.requested = body.get("model") or cfg["model"]
         self.os3_effort = roles.requested_effort(body)
         # e.g. gpt-6-sol-medium, claude-sonnet-5-medium
-        self.model = roles.pick(cfg, self.role, self.requested, self.os3_effort)
+        has_images = any(isinstance(m.get("content"), list) and any(isinstance(p, dict) and P._image_bytes(p) for p in m["content"])
+                         for m in body.get("messages") or [])
+        self.model = roles.pick(cfg, self.role, self.requested, self.os3_effort, images=has_images)
+        self.has_images = has_images
         self.backend = roles.backend(self.model)
         self.fell_back = False
         if (store.kv_get("limited:" + self.backend) or 0) > time.time():  # this subscription just hit its limit
@@ -244,6 +247,8 @@ class Turn:
     def to_message(self, raw):
         self._result = ("text", [])
         if not self.tools:
+            if self.has_images and self.role == "background":  # e.g. OS3's image check: its answer decides if images work
+                self.ev("image_answer", f"{self.model}: {raw[:150]}")
             return {"role": "assistant", "content": raw}, "stop"
         d = P.parse_decision(raw) or {}
         calls = d.get("calls") or ([d] if d.get("tool") else [])  # old single-call shape

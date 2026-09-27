@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.8 (2026-09-27)
+- **Computer use and browser tasks work again with OS3's newest version.** OS3 now checks whether the model can
+  read images (it asks for four colour bands) before a worker may look at screenshots. The small background model
+  often misread that check, and OS3 then asked you to connect a paid image provider. Background calls that
+  contain an image now run on your worker model (Standard), which passes the check.
+
 ## 0.4.7 (2026-09-27)
 - **Automatic updates work again on Macs and PCs where they failed with `CERTIFICATE_VERIFY_FAILED`.** Some Python
   installs have no root certificates (the python.org Python on macOS until "Install Certificates" is run; on Windows,
