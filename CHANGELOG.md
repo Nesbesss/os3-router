@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.10 (2026-09-27)
+- **Generated images always reach you.** If the model makes an image but forgets to hand it to OS3, the router now
+  hands it over itself. Editing images works too: send rabbit a photo and ask for a change.
+
 ## 0.4.9 (2026-09-27)
 - **Image generation with your ChatGPT subscription.** When you ask rabbit for an image, the worker now creates it
   with Codex's own image generation (it counts toward your normal Codex limit) and hands the file to OS3, instead

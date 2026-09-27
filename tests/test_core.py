@@ -537,6 +537,17 @@ class CodexImagesTest(unittest.TestCase):
         cmd = codex_runner.build_cmd({"effort": "low"}, "gpt-6-sol-low", image_gen=True)
         self.assertNotIn("image_generation", cmd)
         self.assertIn("image_generation", codex_runner.build_cmd({"effort": "low"}, "gpt-6-sol-low"))
+        home = tempfile.mkdtemp()
+        os.makedirs(os.path.join(home, "generated_images", "T1"))
+        png = os.path.join(home, "generated_images", "T1", "apple.png")
+        open(png, "wb").close()
+        with mock.patch.dict(os.environ, {"CODEX_HOME": home}):
+            t.tid = "T1"
+            msg, fin = t.to_message(json.dumps({"kind": "final", "calls": [], "content": "I made an apple."}))
+            self.assertEqual((fin, msg["tool_calls"][0]["function"]["name"]), ("tool_calls", "report_result_files"))
+            self.assertEqual(json.loads(msg["tool_calls"][0]["function"]["arguments"])["files"], [png])
+            given = decision(("report_result_files", {"files": [png]}))
+            self.assertEqual(len(t.to_message(json.dumps(given))[0]["tool_calls"]), 1)  # already handed over
         bad = decision(("image_generate", {"prompt": "apple"}))
         self.assertTrue(repair.decision_problems(bad, tools, SYSTEM, own_images=True))
         self.assertFalse(repair.decision_problems(bad, tools, SYSTEM))  # Claude: OS3's tool is the only way

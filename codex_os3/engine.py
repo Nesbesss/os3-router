@@ -51,7 +51,7 @@ class Turn:
                                   if m.get("role") == "system")
         self.rid = store.request_start(self.task, source, self.model, bool(body.get("stream")),
                                        len(tools), len(self.msgs), len(json.dumps(body)), self.role)
-        self.tid = None
+        self.tid, self.started = None, time.time()
         self._note_params(body)
 
     @staticmethod
@@ -71,6 +71,34 @@ class Turn:
         """Codex makes the images itself when OS3 offers its (paid-provider) image_generate tool."""
         return (self.backend == "codex" and self.cfg.get("codex_images", True)
                 and any(t.get("function", t).get("name") == "image_generate" for t in self.tools))
+
+    def new_images(self):
+        """Images Codex generated in this request's thread (it saves them per thread)."""
+        home = os.path.expanduser(os.environ.get("CODEX_HOME") or "~/.codex")
+        d = os.path.join(home, "generated_images", self.tid or "-")
+        try:
+            return sorted(os.path.join(d, f) for f in os.listdir(d)
+                          if os.path.getmtime(os.path.join(d, f)) >= self.started - 1)
+        except OSError:
+            return []
+
+    def hand_over_images(self, d):
+        """Models sometimes make the image and then forget to give it to OS3: add report_result_files."""
+        new = self.new_images() if self.own_images() else []
+        calls = [c for c in (d.get("calls") or []) if isinstance(c, dict) and c.get("tool")] if d.get("kind") == "tool_call" else []
+        given = set()
+        for c in calls:
+            if c["tool"] == "report_result_files":
+                try:
+                    given |= set(repair.load_args(c.get("arguments_json") or "{}").get("files") or [])
+                except (ValueError, AttributeError):
+                    pass
+        missing = [f for f in new if f not in given]
+        if not missing:
+            return d
+        self.ev("images_handed_over", f"{len(missing)} generated image(s) added to report_result_files")
+        return {"kind": "tool_call", "content": "", "calls": calls + [
+            {"tool": "report_result_files", "arguments_json": json.dumps({"files": missing})}]}
 
     def fallback_model(self, err=None):
         if err is not None and err.plan:
@@ -258,7 +286,7 @@ class Turn:
             if self.has_images and self.role == "background":  # e.g. OS3's image check: its answer decides if images work
                 self.ev("image_answer", f"{self.model}: {raw[:150]}")
             return {"role": "assistant", "content": raw}, "stop"
-        d = P.parse_decision(raw) or {}
+        d = self.hand_over_images(P.parse_decision(raw) or {})
         calls = d.get("calls") or ([d] if d.get("tool") else [])  # old single-call shape
         calls = [c for c in calls if isinstance(c, dict) and c.get("tool")]
         if d.get("kind") != "tool_call" or not calls:
