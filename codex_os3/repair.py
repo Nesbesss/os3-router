@@ -47,6 +47,22 @@ def fix_node_id(args, tool, prompt):
     return args
 
 
+def local_node(prompt):
+    """The node id of this machine (where Codex saves generated images), from rabbit's node list:
+    matched by hostname, else the default node, else the only one. None when unknown."""
+    import socket
+    me = socket.gethostname().split(".")[0].lower()
+    nodes = [(m.group(1), m.group(2), (re.search(r"<hostname>([^<]+)</hostname>", m.group(3)) or [None, ""])[1])
+             for m in re.finditer(r'<node id="([^"]+)"([^>]*)>(.*?)</node>', prompt or "", re.S)]
+    for nid, _, host in nodes:
+        if host and host.split(".")[0].lower() == me:
+            return nid
+    for nid, attrs, _ in nodes:
+        if 'default="true"' in attrs:
+            return nid
+    return nodes[0][0] if len(nodes) == 1 else None
+
+
 DLAM_SCRIPTS = ("probe.py", "capture.py", "act.py")
 
 
@@ -151,7 +167,7 @@ def call_problems(name, args, tool):
     return probs
 
 
-def decision_problems(d, tools, node_src):
+def decision_problems(d, tools, node_src, own_images=False):
     if d.get("kind") != "tool_call":
         return []
     calls = [c for c in (d.get("calls") or ([d] if d.get("tool") else [])) if isinstance(c, dict)]
@@ -169,6 +185,9 @@ def decision_problems(d, tools, node_src):
         if isinstance(args, dict):  # judge the call as it will be sent, after the auto-fixes
             args = fix_computer_use(name, fix_node_id(args, tool, node_src))
         out += call_problems(name, args, tool)
+        if own_images and name == "image_generate":
+            out.append("image_generate: don't call it (it needs a paid image provider). Create the image with your "
+                       "own built-in image generation instead, then call report_result_files with its saved path")
     return out
 
 

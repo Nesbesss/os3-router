@@ -2,7 +2,7 @@
 release; a newer one is downloaded, its own offline test suite must pass, then its files are
 copied over the install (previous version kept in app.prev) and the service reloads without
 downtime. Only for installs made by the installer (~/.codex-os3/app); off with auto_update=false."""
-import io, json, os, plistlib, shutil, subprocess, sys, tarfile, tempfile, time, urllib.request
+import io, json, os, plistlib, shutil, subprocess, sys, tarfile, tempfile, time, urllib.error, urllib.request
 
 from . import __version__, config, store
 
@@ -19,8 +19,20 @@ def ver(v):
 
 
 def _get(url, timeout=60):
-    return urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "os3-router/" + __version__}),
-                                  timeout=timeout).read()
+    try:
+        return urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "os3-router/" + __version__}),
+                                      timeout=timeout).read()
+    except urllib.error.URLError as e:
+        # Python without usable root certificates (python.org macOS builds; Windows only has the roots
+        # already installed). curl uses the OS's own trust (Windows fetches missing roots itself).
+        curl = shutil.which("curl.exe" if os.name == "nt" else "curl")
+        if "CERTIFICATE_VERIFY_FAILED" not in str(e) or not curl:
+            raise
+        r = subprocess.run([curl, "-fsSL", "--max-time", str(timeout), "-A", "os3-router/" + __version__, url],
+                           capture_output=True, timeout=timeout + 10)
+        if r.returncode:
+            raise RuntimeError(f"curl: {r.stderr.decode(errors='replace').strip()[:200]}") from e
+        return r.stdout
 
 
 def latest():

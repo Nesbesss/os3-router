@@ -82,3 +82,29 @@ def terminate(pid):
             os.kill(int(pid), signal.SIGTERM)
     except (OSError, ValueError):
         pass
+
+
+def https_certs():
+    """python.org's macOS Python ships without root certificates until "Install Certificates" is run:
+    every HTTPS call then fails (CERTIFICATE_VERIFY_FAILED), and the updater can never fetch its fix.
+    If Python has none, use certifi or macOS's own root store, for every urlopen in this process."""
+    import ssl, urllib.request
+    paths = ssl.get_default_verify_paths()
+    if (paths.cafile and os.path.exists(paths.cafile)) or (paths.capath and os.path.isdir(paths.capath)
+                                                         and os.listdir(paths.capath)):
+        return False
+    ctx = ssl.create_default_context()
+    try:
+        import certifi
+        ctx.load_verify_locations(certifi.where())
+    except Exception:
+        if sys.platform != "darwin":
+            return False
+        pem = subprocess.run(["security", "find-certificate", "-a", "-p",
+                              "/System/Library/Keychains/SystemRootCertificates.keychain"],
+                             capture_output=True, text=True, timeout=30).stdout
+        if "BEGIN CERTIFICATE" not in pem:
+            return False
+        ctx.load_verify_locations(cadata=pem)
+    urllib.request.install_opener(urllib.request.build_opener(urllib.request.HTTPSHandler(context=ctx)))
+    return True

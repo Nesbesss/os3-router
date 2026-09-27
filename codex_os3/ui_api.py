@@ -1,13 +1,14 @@
 """JSON API behind the web UI. handle() -> (status, body, content_type)."""
 import json, os, re, shutil, subprocess, time
 
-from . import __version__, config, export, os3, roles, store
+from . import __version__, accounts, config, export, os3, roles, store
 from . import platform_util
 from .platform_util import pid_alive
 
 J = "application/json"
 EDITABLE = {"model", "effort", "bind", "port", "captures", "retention_days", "jev_key",
-            "webhook", "watchdog", "restart_agent", "auto_update", "fallback", "share_reports", "max_codex", "max_images", "role_routing", "roles"}
+            "webhook", "watchdog", "restart_agent", "auto_update", "fallback", "share_reports",
+            "engine", "stream_chat", "compact_tokens", "codex_images", "max_codex", "max_images", "role_routing", "roles"}
 
 
 def clean_roles(value):
@@ -175,7 +176,8 @@ def handle(method, path, data, q, cfg):
         return 200, {"version": __version__, "time": time.time(), "limits": lims.get("codex") or next(iter(lims.values()), None),
                      "limits_all": lims, "latest_release": store.kv_get("update_latest"),
                      "whats_new": whatsnew()["show"],
-                     "fallback_active": [b for b in ("codex", "claude") if (store.kv_get("limited:" + b) or 0) > time.time()],
+                     "fallback_active": [b for b in ("codex", "claude") if (accounts.pick() is None if b == "codex" else
+                                                                           (store.kv_get("limited:" + b) or 0) > time.time())],
                      "alerts": store.kv_get("alerts") or [],
                      "usage_limit": store.kv_get("usage_limit"), "agent": os3.status(),
                      "watchdog": wd, "running": running, "model": cfg["model"],
@@ -198,6 +200,19 @@ def handle(method, path, data, q, cfg):
         if not re.fullmatch(r"[0-9a-f]{8,40}", task):
             return 400, {"error": "bad task id"}, J
         return 200, export.build(task, cfg), "application/zip"
+    if path.startswith("accounts"):  # several Codex accounts
+        if method == "GET" and path == "accounts":
+            return 200, accounts.overview(cfg), J
+        if method == "GET" and path == "accounts/login":
+            return 200, accounts.login_status(q.get("login", "")), J
+        try:
+            if method == "POST" and path == "accounts/add":
+                return 200, accounts.start_login(cfg, bool(data.get("accept_terms"))), J
+            if method == "POST" and path == "accounts/remove":
+                accounts.remove(str(data.get("id", "")))
+                return 200, {"ok": True}, J
+        except ValueError as e:
+            return 400, {"error": str(e)}, J
     if method == "GET" and path == "onboarding":
         from . import onboarding
         return 200, onboarding.status(cfg), J

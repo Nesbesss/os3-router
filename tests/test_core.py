@@ -132,6 +132,20 @@ class Sessions(unittest.TestCase):
         sessions.done(k, None, compacted, False)
         self.assertIsNone(store.session_get(k))
 
+    def test_chat_continues_when_os3_replaces_its_trailing_snapshot(self):
+        base = [{"role": "system", "content": "channel"}, {"role": "user", "content": "hi"}]
+        snap = lambda t: {"role": "user", "content": f"<supplementary-context>{t}</supplementary-context>"}
+        k = sessions.key(base, TOOLS)
+        sessions.plan(k, base + [snap(1)])
+        sessions.done(k, "C1", base + [snap(1)], True)
+        nxt = base + [{"role": "assistant", "content": "hello"}, {"role": "user", "content": "q2"}, snap(2)]
+        tracked, th, delta = sessions.plan(k, nxt)
+        self.assertEqual((th, [m["content"] for m in delta]), ("C1", ["hello", "q2", snap(2)["content"]]))
+        sessions.done(k, "C1", nxt, True)
+        rewritten = base[:1] + [{"role": "user", "content": "other"}, snap(3)]
+        self.assertIsNone(sessions.plan(k, rewritten)[1])  # an older message changed: still fresh
+        sessions.done(k, None, rewritten, False)
+
 
 class Roles(unittest.TestCase):
     def body(self, tools, system="You are an assistant."):
@@ -154,6 +168,9 @@ class Roles(unittest.TestCase):
         self.assertEqual(roles.pick(cfg, "worker", "gpt-6-luna"), "gpt-6-sol-high")
         self.assertEqual(roles.pick(cfg, "chat", "gpt-6-luna"), "gpt-6-luna-medium")
         self.assertEqual(roles.pick(dict(cfg, role_routing=False), "worker", "gpt-5.5"), "gpt-5.5")
+        bg = dict(cfg, roles=dict(cfg["roles"], background={"model": "gpt-6-luna", "effort": "low"}))
+        self.assertEqual(roles.pick(bg, "background", "gpt-6-luna"), "gpt-6-luna-low")
+        self.assertEqual(roles.pick(bg, "background", "gpt-6-luna", images=True), "gpt-6-sol-low")  # OS3's image check
 
     def test_split_effort(self):
         from codex_os3.codex_runner import split_model
@@ -502,6 +519,198 @@ class MacAppUpdateTest(unittest.TestCase):
         finally:
             updater._get = orig
             os.environ["HOME"] = old_home
+
+
+class ContentStreamTest(unittest.TestCase):
+    def feed(self, raw, ok=lambda t: True, step=3):
+        out = []
+        cs = P.ContentStream(out.append, ok)
+        for i in range(0, len(raw), step):
+            cs.feed(raw[i:i + step])
+        return "".join(out)
+
+    def test_streams_final_content_split_anywhere(self):
+        text = 'Hi "you"\nweek 38: toets \u00e9 \U0001f600 ' + "x" * 200
+        raw = json.dumps({"kind": "final", "calls": [], "content": text})
+        for step in (1, 2, 5, 7):
+            self.assertEqual(self.feed(raw, step=step), text)
+
+    def test_tool_calls_and_held_corrections_are_not_streamed(self):
+        self.assertEqual(self.feed(json.dumps({"kind": "tools", "calls": [], "content": "x" * 300})), "")
+        self.assertEqual(self.feed(json.dumps({"kind": "final", "calls": [], "content": "nope " * 60}),
+                                   ok=lambda t: False), "")
+
+
+class UpdaterCertTest(unittest.TestCase):
+    def test_falls_back_to_curl_on_certificate_errors(self):
+        import urllib.error
+        from codex_os3 import updater
+        bad = urllib.error.URLError("[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed")
+        done = mock.Mock(returncode=0, stdout=b'{"tag_name": "v9.9.9"}')
+        with mock.patch.object(updater.urllib.request, "urlopen", side_effect=bad), \
+                mock.patch.object(updater.shutil, "which", return_value="/usr/bin/curl"), \
+                mock.patch.object(updater.subprocess, "run", return_value=done) as run:
+            self.assertEqual(updater.latest(), "v9.9.9")
+        self.assertEqual(run.call_args[0][0][0], "/usr/bin/curl")
+        with mock.patch.object(updater.urllib.request, "urlopen", side_effect=urllib.error.URLError("timed out")):
+            self.assertRaises(urllib.error.URLError, updater.latest)  # other errors are not retried
+
+
+class AccountsTest(unittest.TestCase):
+    """Two Codex accounts: stay on one until it's nearly out, keep conversations on their account,
+    move to the next at the limit, and back to main once it has room."""
+    def setUp(self):
+        from codex_os3 import accounts, config
+        self.a, self.cfg = accounts, config
+        self.home = tempfile.mkdtemp()
+        os.makedirs(os.path.join(self.home, "sessions"))
+        self.env = mock.patch.dict(os.environ, {"CODEX_HOME": self.home})
+        self.env.start()
+        os.makedirs(os.path.join(accounts.root(), "2", "sessions", "2026"), exist_ok=True)
+        open(os.path.join(accounts.root(), "2", "auth.json"), "w").close()
+        store._w("DELETE FROM limits")
+        store._w("DELETE FROM kv WHERE k LIKE 'limited:%'")
+
+    def tearDown(self):
+        self.env.stop()
+
+    def test_pick_and_switch(self):
+        a, now = self.a, time.time()
+        self.assertEqual(a.all_accounts(), ["main", "2"])
+        self.assertEqual(a.pick(), "main")
+        store.add_limits({"primary": {"used_percent": 96, "resets_at": now + 3600}}, "codex")
+        self.assertEqual(a.pick(), "2")                    # main nearly out: next account
+        self.assertEqual(a.pick(prefer="2"), "2")
+        store.add_limits({"primary": {"used_percent": 10, "resets_at": now + 3600}}, "codex")
+        self.assertEqual(a.pick(), "main")                 # main has room again: back to it
+        self.assertEqual(a.pick(prefer="2"), "2")          # but a conversation on 2 stays there
+        a.mark_limited("main")
+        a.mark_limited("2")
+        self.assertIsNone(a.pick())                        # everything out: model fallback takes over
+        self.assertEqual(a.env("2")["CODEX_HOME"], os.path.join(a.root(), "2"))
+        self.assertIsNone(a.env("main"))
+
+    def test_streamed_chat_keeps_its_account(self):
+        from codex_os3 import appserver, engine
+        body = {"model": "gpt-6-luna", "messages": [{"role": "system", "content": "s"}, {"role": "user", "content": "q"}],
+                "tools": [{"type": "function", "function": {"name": "create_task", "parameters": {}}}]}
+        t = engine.Turn(dict(self.cfg.load(), engine="appserver", stream_chat=True), body, lambda: True)
+        t.account, t.stream_sink = "2", lambda text: None
+        with mock.patch.object(appserver, "run", return_value=("{}", {}, "T", None)) as run:
+            t.codex("p", stream=True)
+        self.assertEqual(run.call_args.kwargs["account"], "2")
+        self.assertIn("on_text", run.call_args.kwargs)
+
+    def test_owner_finds_thread_in_its_account(self):
+        open(os.path.join(self.a.root(), "2", "sessions", "2026", "rollout-x-T42.jsonl"), "w").close()
+        self.assertEqual(self.a.owner("T42"), "2")
+        self.assertIsNone(self.a.owner("nope"))
+
+    def test_engine_retries_on_next_account(self):
+        from codex_os3 import codex_runner, engine
+        from codex_os3.codex_runner import UsageLimit
+        seen = []
+
+        def run(cfg, prompt, model, *a, account=None, **k):
+            seen.append(account)
+            if account == "main":
+                raise UsageLimit("usage limit")
+            return '{"kind":"final","calls":[],"content":"hi"}', {}, "T1", None
+        body = {"model": "gpt-6-luna", "messages": [{"role": "system", "content": "s"}, {"role": "user", "content": "q"}],
+                "tools": [{"type": "function", "function": {"name": "create_task", "parameters": {}}}]}
+        cfg = dict(self.cfg.load(), engine="exec")
+        with mock.patch.object(codex_runner, "run", side_effect=run):
+            msg, _ = engine.Turn(cfg, body, lambda: True).run()
+        self.assertEqual((seen, msg["content"]), (["main", "2"], "hi"))
+
+
+class UnconfirmedResultTest(unittest.TestCase):
+    def test_rejected_result_gets_a_fresh_look(self):
+        call = {"role": "assistant", "tool_calls": [{"id": "c1", "function": {"name": "report_business_result", "arguments": "{}"}}]}
+        rej = {"role": "tool", "tool_call_id": "c1", "content": 'Error: {"success":false,"code":"RESULT_UNCONFIRMED"}'}
+        self.assertTrue(P.unconfirmed([call, rej]))
+        self.assertFalse(P.unconfirmed([call, rej, {"role": "assistant", "content": "x"}]))  # already answered
+        self.assertFalse(P.unconfirmed([call, {"role": "tool", "tool_call_id": "c1", "content": "ok"}]))
+
+
+class CodexImagesTest(unittest.TestCase):
+    """OS3's image_generate needs a paid provider: workers make images with Codex's own generator."""
+    def test_worker_with_image_generate_uses_codex_images(self):
+        from codex_os3 import codex_runner, config, engine
+        tools = TOOLS + [{"type": "function", "function": {"name": "image_generate", "parameters": {}}}]
+        body = {"model": "gpt-6-sol", "tools": tools,
+                "messages": [{"role": "system", "content": "You are a worker agent in OS3."}, {"role": "user", "content": "draw an apple"}]}
+        t = engine.Turn(dict(config.load(), engine="exec"), body, lambda: True)
+        self.assertTrue(t.own_images())
+        self.assertIn("built-in image generation", t.build(full=True)[1])
+        self.assertFalse(engine.Turn(dict(config.load(), codex_images=False), body, lambda: True).own_images())
+        self.assertFalse(engine.Turn(config.load(), dict(body, tools=TOOLS), lambda: True).own_images())
+        cmd = codex_runner.build_cmd({"effort": "low"}, "gpt-6-sol-low", image_gen=True)
+        self.assertNotIn("image_generation", cmd)
+        self.assertIn("image_generation", codex_runner.build_cmd({"effort": "low"}, "gpt-6-sol-low"))
+        home = tempfile.mkdtemp()
+        os.makedirs(os.path.join(home, "generated_images", "T1"))
+        png = os.path.join(home, "generated_images", "T1", "apple.png")
+        open(png, "wb").close()
+        with mock.patch.dict(os.environ, {"CODEX_HOME": home}):
+            t.tid = "T1"
+            msg, fin = t.to_message(json.dumps({"kind": "final", "calls": [], "content": "I made an apple."}))
+            self.assertEqual((fin, msg["tool_calls"][0]["function"]["name"]), ("tool_calls", "report_result_files"))
+            self.assertEqual(json.loads(msg["tool_calls"][0]["function"]["arguments"])["files"], [png])
+            given = decision(("report_result_files", {"files": [png]}))
+            self.assertEqual(len(t.to_message(json.dumps(given))[0]["tool_calls"]), 1)  # already handed over
+        os3_files = {"type": "function", "function": {"name": "report_result_files", "parameters": {"type": "object", "properties": {
+            "files": {"type": "array", "items": {"type": "object", "properties": {"node_id": {"type": "string"}, "path": {"type": "string"},
+                                                                                "deliverToUser": {"type": "boolean"}}}}}}}}
+        real = engine.Turn(config.load(), dict(body, tools=tools + [os3_files], messages=[
+            {"role": "system", "content": "You are a worker agent in OS3. " + SYSTEM}, body["messages"][1]]), lambda: True)
+        real.tid = "T1"
+        with mock.patch.dict(os.environ, {"CODEX_HOME": home}):
+            msg, _ = real.to_message(json.dumps({"kind": "final", "calls": [], "content": "done"}))
+            f = json.loads(msg["tool_calls"][0]["function"]["arguments"])["files"]
+            self.assertEqual(f, [{"node_id": NODE_A, "path": png, "deliverToUser": True}])  # default node when hostname unknown
+            own = decision(("report_result_files", {"files": [{"node_id": NODE_A, "path": png, "deliverToUser": True}]}))
+            self.assertEqual(len(real.to_message(json.dumps(own))[0]["tool_calls"]), 1)  # the model's own objects: no crash
+        bad = decision(("image_generate", {"prompt": "apple"}))
+        self.assertTrue(repair.decision_problems(bad, tools, SYSTEM, own_images=True))
+        self.assertFalse(repair.decision_problems(bad, tools, SYSTEM))  # Claude: OS3's tool is the only way
+
+
+class AppServerHangTest(unittest.TestCase):
+    """A stalled turn that only gets status notices (MCP startup, thread status) must count as hung."""
+    def test_status_noise_is_not_activity(self):
+        import threading
+        from codex_os3 import appserver, codex_runner
+
+        class Fake:
+            loaded, subs, interrupted = set(), {}, []
+
+            def request(self, method, params, timeout=90):
+                if method == "thread/start":
+                    return {"thread": {"id": "T1"}}
+                if method == "turn/interrupt":
+                    self.interrupted.append(params)
+                return {"turn": {"id": "U1"}}
+
+            def rate_limits(self):
+                return None
+        fake = Fake()
+
+        def noise():
+            while not fake.interrupted:
+                q = fake.subs.get("T1")
+                if q:
+                    q.put({"method": "mcpServer/startupStatus/updated", "params": {"threadId": "T1"}})
+                time.sleep(0.2)
+        threading.Thread(target=noise, daemon=True).start()
+        cfg = {"effort": "medium", "max_codex": 1, "hang_idle_s": 1, "hang_max_s": 60}
+        with mock.patch.object(appserver, "server", lambda cfg, *a: fake), \
+                mock.patch.object(appserver.sessions, "rollout_files", lambda tid: []):
+            t0 = time.time()
+            with self.assertRaises(codex_runner.CodexHung):
+                appserver.run(cfg, "hi", "gpt-6-luna-medium")
+        self.assertLess(time.time() - t0, 5)
+        self.assertTrue(fake.interrupted)
 
 
 class BrowserBehaviourTest(unittest.TestCase):

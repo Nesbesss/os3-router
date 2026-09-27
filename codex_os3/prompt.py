@@ -49,8 +49,30 @@ BROWSER_GUIDE = (
     "the visible control that leads to the content (sheet tabs at the bottom of a spreadsheet, menu "
     "items, sections, 'show more'), scroll, or use the app's own search (Ctrl+F), then look again. For "
     "Office Online files, File > Download a copy and read the file with the shell. Before you say "
-    "something isn't there, check every tab/section and the newest screenshot.")
+    "something isn't there, check every tab/section and the newest screenshot. With dummy_system: keep "
+    "the order session open -> cdp probe -> cdp connect; every page command (targets, send, "
+    "observe, screenshot, batch) then uses the connection id that cdp connect returned. Skipping "
+    "connect makes the tool block the whole task. Report a result (report_business_result) right after the "
+    "successful page view that shows it. If a later page action failed or its outcome is unknown, first "
+    "take a fresh successful look (observe or screenshot) at the page showing the result and report with "
+    "that new handle; the application rejects an older handle once a later step was uncertain.")
 VISUAL_TOOLS = ("dummy_system_image", "feed_image")
+UNCONFIRMED_NUDGE = (
+    "\n\nThe application did NOT accept your result (RESULT_UNCONFIRMED): a page step after your evidence "
+    "failed or its outcome is unknown, so the older handle no longer counts. Do not give up and do not "
+    "repeat actions that changed anything. Take one fresh, successful read-only look at the page that shows "
+    "the result (observe or screenshot, reloading the page first if needed), then call report_business_result "
+    "again with the NEW handle. The user is waiting for this answer.")
+
+
+def unconfirmed(msgs):
+    """The application's evidence check rejected the worker's reported result in its latest tool results."""
+    for m in reversed(msgs):
+        if m.get("role") == "assistant":
+            return False
+        if m.get("role") == "tool" and "RESULT_UNCONFIRMED" in text_of(m.get("content")):
+            return True
+    return False
 PROBE_LIMIT = 8
 
 
@@ -203,7 +225,16 @@ def text_of(content, images=None):
     return content or ""
 
 
-def flatten(messages, tools, images=None, header=True, all_messages=None):
+IMAGE_GUIDE = (
+    "Creating images: you have your own built-in image generation, and it is free for the user. When the task "
+    "asks for an image (draw, generate, make a picture, edit a photo), create it with your built-in image "
+    "generation. NEVER call the application's image_generate tool: it needs a paid provider the user does not "
+    "have. Your image tool saves the image on this machine and tells you its file path. Then give it to the "
+    "user: call report_result_files with that file (its path on this machine's node, deliverToUser true, in "
+    "the format the tool describes) and say in your final answer what you made.")
+
+
+def flatten(messages, tools, images=None, header=True, all_messages=None, own_images=False):
     """Fold the conversation into one prompt. With header=False only `messages` (the new
     ones since a resumed session's last turn) are rendered; codex already has the rest."""
     out = []
@@ -223,6 +254,8 @@ def flatten(messages, tools, images=None, header=True, all_messages=None):
                          f"  parameters: {json.dumps(f.get('parameters', {}))}")
         if any(t.get("function", t).get("name", "").startswith("dummy_system") for t in tools):
             out.append(BROWSER_GUIDE)
+        if own_images:
+            out.append(IMAGE_GUIDE)
         out.append("The application's tools are listed below. They are NOT part of your own built-in tool "
                    "list, so you will not see them there: you call one by answering with kind=\"tool_call\" "
                    "and its name in `calls`, and the application runs it. Every tool below is available.\n"
@@ -252,7 +285,16 @@ def flatten(messages, tools, images=None, header=True, all_messages=None):
         if not header:
             out.insert(0, "New events since your last reply (tool results and screenshots):")
         names = ", ".join(t.get("function", t).get("name", "") for t in tools)
+        if not header:  # the full rules are already in this session: a short reminder is enough (it is
+            out.append(  # re-read at every later step, ~2 KB a step added up over a long task)
+                "Same rules as before: every action is a tool_call to the application"
+                + (" (your built-in image generation excepted)" if own_images else "") +
+                "; you have no local environment. All listed tools are live: never claim one is unavailable "
+                "without having tried it. Decide the next step: kind=\"tool_call\" with calls, or kind=\"final\" "
+                "with your answer; arguments_json must be strictly valid JSON.")
+            return "\n\n".join(out).strip()
         out.append(
+            ("Your built-in image generation is the one exception: use it for images. " if own_images else "") +
             "You have NO local environment: never run commands, read files or inspect "
             "anything yourself, and ignore any sandbox or read-only filesystem you notice \u2014 "
             "that is not the user's device. Every action must be a tool_call to the application.\n"
@@ -304,6 +346,75 @@ VERIFY_NUDGE = (
     "If the newest screenshot is older than your last action, capture and look again first. "
     "If anything is not done or not verified, continue with tool calls now. Only if everything "
     "is verified, reply with kind=\"final\" and the final answer (corrected if needed).")
+
+
+class ContentStream:
+    """Pulls the answer text out of the decision JSON while it is being written
+    ({"kind": "final", "calls": [], "content": "..."}) and passes it on. The first HOLD characters
+    wait for `ok(text)`: an answer that starts like a correction case ("that tool isn't available",
+    "couldn't find it") is not streamed, because streamed text can't be taken back."""
+    HOLD = 160
+
+    def __init__(self, sink, ok):
+        self.sink, self.ok = sink, ok
+        self.raw, self.pos, self.state, self.held, self.sent = "", 0, "scan", "", ""
+
+    def feed(self, delta):
+        if self.state in ("off", "done"):
+            return
+        self.raw += delta
+        if self.state == "scan":
+            k = re.search(r'"kind"\s*:\s*"(\w+)"', self.raw)
+            if k and k.group(1) != "final":
+                self.state = "off"
+                return
+            c = re.search(r'"content"\s*:\s*"', self.raw)
+            if not (k and c):
+                return
+            self.pos, self.state = c.end(), "text"
+        s, i, out = self.raw, self.pos, []
+        while i < len(s):
+            ch = s[i]
+            if ch == "\\":
+                if i + 1 >= len(s):
+                    break
+                e = s[i + 1]
+                if e == "u":
+                    if i + 6 > len(s):
+                        break
+                    cp = int(s[i + 2:i + 6], 16)
+                    if 0xD800 <= cp < 0xDC00:  # surrogate pair: wait for the second half
+                        if i + 12 > len(s):
+                            break
+                        lo = int(s[i + 8:i + 12], 16)
+                        out.append(chr(0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00)))
+                        i += 12
+                        continue
+                    out.append(chr(cp))
+                    i += 6
+                    continue
+                out.append({"n": "\n", "t": "\t", "r": "\r", "b": "\b", "f": "\f"}.get(e, e))
+                i += 2
+                continue
+            if ch == '"':
+                self.state = "done"
+                i += 1
+                break
+            out.append(ch)
+            i += 1
+        self.pos = i
+        new = "".join(out)
+        if not self.sent:
+            self.held += new
+            if len(self.held) < self.HOLD and self.state != "done":
+                return
+            if not self.held or not self.ok(self.held):
+                self.state = "off"
+                return
+            new, self.held = self.held, ""
+        if new:
+            self.sent += new
+            self.sink(new)
 
 
 FORCE_NUDGE = ("\n\nREQUIRED: the app requires a tool call in this reply ({which}). Answer with "

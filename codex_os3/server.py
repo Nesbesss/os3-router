@@ -20,6 +20,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def send(self, code, body, ctype="application/json", headers=()):
         raw = body if isinstance(body, bytes) else json.dumps(body).encode()
+        if code >= 400 and not self.path.startswith("/api/"):  # OS3 only says "device can't be reached"
+            store.event("http_error", f"{code} {self.command} {self.path.split('?')[0]}: {raw[:160].decode(errors='replace')}", level="warn")
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(raw)))
@@ -182,6 +184,20 @@ class Handler(BaseHTTPRequestHandler):
             alive = stream_alive
 
         turn = engine.Turn(cfg, body, alive, source=self.client_address[0])
+        cid, created = f"chatcmpl-{uuid.uuid4().hex[:24]}", int(time.time())
+        base = {"id": cid, "object": "chat.completion.chunk", "created": created, "model": turn.requested}
+
+        def chunk(delta, fin=None):
+            self.wfile.write(f"data: {json.dumps(dict(base, choices=[{'index': 0, 'delta': delta, 'finish_reason': fin}]))}\n\n".encode())
+            self.wfile.flush()
+        if stream and cfg.get("stream_chat"):  # prototype: answer text goes out while it's written
+            delay = float(cfg.get("stream_test_delay") or 0)  # test knob: slow streaming down to see it in OS3's UI
+
+            def sink(text):
+                chunk({"role": "assistant", "content": text} if turn.streamed == text else {"content": text})
+                if delay:
+                    time.sleep(delay)
+            turn.stream_sink = sink
         try:
             msg, finish = turn.run()
         except engine.ClientGone:
@@ -195,17 +211,24 @@ class Handler(BaseHTTPRequestHandler):
                 return
             return self.send(502, err)
 
-        cid, created, model = f"chatcmpl-{uuid.uuid4().hex[:24]}", int(time.time()), turn.requested
+        model = turn.requested
         if stream:
-            first = {"role": "assistant"}
+            first = {} if turn.streamed else {"role": "assistant"}
             if msg.get("tool_calls"):
                 first["tool_calls"] = [dict(tc, index=i) for i, tc in enumerate(msg["tool_calls"])]
             else:
-                first["content"] = msg.get("content") or ""
-            base = {"id": cid, "object": "chat.completion.chunk", "created": created, "model": model}
-            for delta, fin in ((first, None), ({}, finish)):
-                chunk = dict(base, choices=[{"index": 0, "delta": delta, "finish_reason": fin}])
-                self.wfile.write(f"data: {json.dumps(chunk)}\n\n".encode())
+                content = msg.get("content") or ""
+                if turn.streamed:  # already sent while it was written: only what's left
+                    store.event("streamed", f"{len(turn.streamed)} of {len(content)} chars sent while written", task=turn.task)
+                    rest = content[len(turn.streamed):] if content.startswith(turn.streamed) else ""
+                    if not content.startswith(turn.streamed):
+                        store.event("stream_mismatch", "the final answer changed after streaming began", task=turn.task, level="warn")
+                    content = rest
+                if content or not turn.streamed:
+                    first["content"] = content
+            if first:
+                chunk(first)
+            chunk({}, finish)
             self.wfile.write(b"data: [DONE]\n\n")
             self.wfile.flush()
             self.close_connection = True

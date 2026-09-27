@@ -76,7 +76,7 @@ def run(cfg, prompt, model, schema=None, alive=lambda: True, images=(), resume=N
     try:
         idle = idle_limit(cfg, split_model(model, cfg["effort"])[1], role)
         out, err, thread = _supervise(dict(cfg, hang_idle_s=idle), cmd, message(prompt, images), alive, resume,
-                                      cwd=WORKDIR, final='"type":"result"', env=environ(cmd[0]))
+                                      cwd=WORKDIR, final=lambda line: '"type":"result"' in line, env=environ(cmd[0]))
     finally:
         sem.release()
 

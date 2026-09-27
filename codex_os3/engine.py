@@ -7,7 +7,7 @@ main codex call (resumed session when possible, one fresh retry on failure/hang)
   -> tool-call repair (JSON, node ids, dlam scripts, missing feed_image)."""
 import json, os, time, uuid
 
-from . import claude_runner, codex_runner, config, notify, prompt as P, repair, roles, sessions, store
+from . import accounts, appserver, claude_runner, codex_runner, config, notify, prompt as P, repair, roles, sessions, store
 from .codex_runner import ClientGone, CodexHung, UsageLimit
 
 
@@ -28,10 +28,13 @@ class Turn:
         self.requested = body.get("model") or cfg["model"]
         self.os3_effort = roles.requested_effort(body)
         # e.g. gpt-6-sol-medium, claude-sonnet-5-medium
-        self.model = roles.pick(cfg, self.role, self.requested, self.os3_effort)
+        has_images = any(isinstance(m.get("content"), list) and any(isinstance(p, dict) and P._image_bytes(p) for p in m["content"])
+                         for m in body.get("messages") or [])
+        self.model = roles.pick(cfg, self.role, self.requested, self.os3_effort, images=has_images)
+        self.has_images = has_images
         self.backend = roles.backend(self.model)
         self.fell_back = False
-        if (store.kv_get("limited:" + self.backend) or 0) > time.time():  # this subscription just hit its limit
+        if self.out_of_limits(self.backend):  # this subscription (every account of it) just hit its limit
             fb = self.fallback_model()
             if fb:
                 self.model, self.backend, self.fell_back = fb, roles.backend(fb), True
@@ -48,7 +51,7 @@ class Turn:
                                   if m.get("role") == "system")
         self.rid = store.request_start(self.task, source, self.model, bool(body.get("stream")),
                                        len(tools), len(self.msgs), len(json.dumps(body)), self.role)
-        self.tid = None
+        self.tid, self.started = None, time.time()
         self._note_params(body)
 
     @staticmethod
@@ -62,13 +65,71 @@ class Turn:
             store.event("os3_params", json.dumps({k: v if isinstance(v, (str, int, float, bool, dict)) and len(json.dumps(v)) < 200
                                                   else "…" for k, v in extra.items()})[:500])
 
+    def new_images(self):
+        """Images Codex generated in this request's thread (it saves them per thread)."""
+        home = accounts.home(self.account)
+        d = os.path.join(home, "generated_images", self.tid or "-")
+        try:
+            return sorted(os.path.join(d, f) for f in os.listdir(d)
+                          if os.path.getmtime(os.path.join(d, f)) >= self.started - 1)
+        except OSError:
+            return []
+
+    def hand_over_images(self, d):
+        """Models sometimes make the image and then forget to give it to OS3: add report_result_files.
+        Never fails the request: on anything unexpected the model's own decision goes through."""
+        try:
+            return self._hand_over_images(d)
+        except Exception as e:
+            self.ev("images_handover_failed", f"{type(e).__name__}: {e}", "warn")
+            return d
+
+    def _hand_over_images(self, d):
+        new = self.new_images() if self.own_images() else []
+        if not new:
+            return d
+        calls = [c for c in (d.get("calls") or []) if isinstance(c, dict) and c.get("tool")] if d.get("kind") == "tool_call" else []
+        given = set()
+        for c in calls:
+            if c["tool"] == "report_result_files":
+                args = repair.load_args(c.get("arguments_json") or "{}")
+                for f in (args.get("files") or []) if isinstance(args, dict) else []:
+                    given.add(f.get("path") if isinstance(f, dict) else f)  # OS3: {node_id, path, deliverToUser}
+        missing = [f for f in new if f not in given]
+        if not missing:
+            return d
+        spec = next((t.get("function", t) for t in self.tools if t.get("function", t).get("name") == "report_result_files"), {})
+        items = (((spec.get("parameters") or {}).get("properties") or {}).get("files") or {}).get("items") or {}
+        if items.get("type") == "object":
+            node = repair.local_node(self.node_src)
+            if not node:
+                self.ev("images_not_handed_over", "no node id for this machine in the node list", "warn")
+                return d
+            files = [{"node_id": node, "path": f, "deliverToUser": True} for f in missing]
+        else:
+            files = missing
+        self.ev("images_handed_over", f"{len(missing)} generated image(s) added to report_result_files")
+        return {"kind": "tool_call", "content": "", "calls": calls + [
+            {"tool": "report_result_files", "arguments_json": json.dumps({"files": files})}]}
+
+    def own_images(self):
+        """Codex makes the images itself when OS3 offers its (paid-provider) image_generate tool."""
+        return (self.backend == "codex" and self.cfg.get("codex_images", True)
+                and any(t.get("function", t).get("name") == "image_generate" for t in self.tools))
+
+    @staticmethod
+    def out_of_limits(backend):
+        if backend == "codex":
+            return accounts.pick() is None
+        return (store.kv_get("limited:" + backend) or 0) > time.time()
+
     def fallback_model(self, err=None):
         if err is not None and err.plan:
             return None
         fb = roles.pick_fallback(self.cfg, self.role, self.os3_effort)
         if not fb or fb == self.model:
             return None
-        if roles.backend(fb) != self.backend and (store.kv_get("limited:" + roles.backend(fb)) or 0) > time.time():
+        if roles.backend(fb) != self.backend and self.out_of_limits(roles.backend(fb)):
             return None  # the fallback's subscription is out too
         return fb
 
@@ -79,27 +140,56 @@ class Turn:
     def build(self, full, delta=None):
         src = self.msgs if full else delta
         imgs = P.Images(src, self.cfg["max_images"])
-        p = (P.flatten(self.msgs, self.tools, imgs) if full else
-             P.flatten(delta, self.tools, imgs, header=False, all_messages=self.msgs))
+        p = (P.flatten(self.msgs, self.tools, imgs, own_images=self.own_images()) if full else
+             P.flatten(delta, self.tools, imgs, header=False, all_messages=self.msgs, own_images=self.own_images()))
         if self.forced:
             p += P.FORCE_NUDGE.format(which="any tool" if self.forced == "*" else f"call `{self.forced}`")
         streak = P.observe_streak(self.msgs) if self.tools else 0
         if streak >= P.LOOP_LIMIT:
             p += P.LOOP_NUDGE.format(n=streak)
             self.ev("loop_nudge", f"{streak} observe-only turns, nudging to act")
+        if self.tools and P.unconfirmed(self.msgs):
+            p += P.UNCONFIRMED_NUDGE
+            self.ev("unconfirmed_nudge", "the application rejected the reported result; asking for fresh evidence")
         probes = P.probe_streak(self.msgs) if self.tools else 0
         if probes >= P.PROBE_LIMIT and probes % 4 == 0:  # not every turn: once, then every 4 more probes
             p += P.PROBE_NUDGE.format(n=probes)
             self.ev("probe_nudge", f"{probes} browser probes without a screenshot, nudging to look")
         return imgs, p
 
-    def codex(self, prompt, images=(), resume=None, keep=False):
-        runner = claude_runner if self.backend == "claude" else codex_runner
+    account = None  # which Codex account serves this request (accounts.MAIN, "2", ...)
+    tools = ()
+    stream_sink = None  # set by the server for a streamed request: receives answer text as it's written
+    streamed = ""
+
+    def codex(self, prompt, images=(), resume=None, keep=False, stream=False):
+        runner, extra = (claude_runner if self.backend == "claude" else codex_runner), {}
+        if self.backend == "codex":
+            extra["account"] = self.account
+            if self.own_images():
+                extra["image_gen"] = True
+        if self.backend == "codex" and self.cfg.get("engine") == "appserver":  # prototype: one long-running codex
+            runner = appserver
+            if stream and self.stream_sink and not self.streamed and self.role == "chat" and not self.forced \
+                    and self.cfg.get("stream_chat"):
+                names = [t.get("function", t).get("name", "") for t in self.tools]
+                cs = P.ContentStream(self._stream, lambda t: not P.claims_unavailable(t, names) and not P.claims_not_found(t))
+                extra["on_text"] = cs.feed  # add to the options: replacing them lost the account
         text, usage, thread, limits = runner.run(
-            self.cfg, prompt, self.model, self.schema, self.alive, images, resume, keep, role=self.role)
+            self.cfg, prompt, self.model, self.schema, self.alive, images, resume, keep, role=self.role, **extra)
+        if self.backend == "codex":
+            limits_key = accounts.backend_key(self.account)
+        else:
+            limits_key = self.backend
+        if "on_text" in extra and not self.streamed:
+            self.ev("stream_held", "answer not streamed: a tool call, or it starts like a correction case")
         store.add_tokens(self.rid, usage)
-        store.add_limits(limits, self.backend)
+        store.add_limits(limits, limits_key)
         return text, thread
+
+    def _stream(self, text):
+        self.streamed += text
+        self.stream_sink(text)
 
     def extra(self, name, prompt_resume, prompt_fresh, images=()):
         """A corrective extra codex call. Never fails the request: any error keeps the
@@ -114,6 +204,26 @@ class Turn:
             self.ev(name + "_failed", f"{type(e).__name__}: {str(e)[:160]}; keeping original answer", "warn")
             return None, None
 
+    def other_account(self, err):
+        """Codex usage limit on this account: the same request, fresh, on the next account with room.
+        -> (raw, thread) or None when no other account is left (then the model fallback applies)."""
+        if self.backend != "codex" or err.plan:
+            return None
+        while True:
+            accounts.mark_limited(self.account)
+            nxt = accounts.pick()
+            if not nxt or nxt == self.account:
+                return None
+            msg = f"Codex account {self.account} reached its usage limit: switched to account {nxt}"
+            self.ev("account_switch", msg, "warn")
+            notify.desktop(msg, key="account:" + nxt)
+            self.account = nxt
+            images, prompt = self.build(full=True)
+            try:
+                return self.codex(prompt, images.files, keep=self.tracked)
+            except UsageLimit:
+                continue
+
     def run(self):
         """-> (message dict, finish_reason)."""
         tools = self.tools
@@ -124,27 +234,38 @@ class Turn:
             if self.tracked:
                 sessions.done(self.task, None, self.msgs, False)
             raise EngineError("no messages")
+        if self.backend == "codex":  # which account: the thread's own while it has room
+            holder = accounts.owner(thread) if thread else None
+            self.account = accounts.pick(prefer=holder) or accounts.MAIN
+            if thread and holder and holder != self.account:
+                self.ev("account_switch", f"account {holder} is nearly out: continuing on account {self.account} (fresh)")
+                thread = None
+                images, prompt = self.build(full=True)
         mode = "resume" if thread else "fresh"
         ok, status = False, "error"
         try:
             try:
-                raw, self.tid = self.codex(prompt, images.files, resume=thread, keep=self.tracked)
+                raw, self.tid = self.codex(prompt, images.files, resume=thread, keep=self.tracked, stream=True)
             except ClientGone:
                 raise
             except UsageLimit as e:
-                fb = self.fallback_model(e)
-                if not fb:
-                    raise
-                # retry this same request on the fallback; later requests go there directly for 15 min
-                name = "Claude" if self.backend == "claude" else "Codex"
-                store.kv_set("limited:" + self.backend, time.time() + 900)
-                msg = f"{name} usage limit reached: {roles.LABEL.get(self.role, self.role)} switched to {fb}"
-                self.ev("fallback", msg + (f" (resets at {e.resets})" if e.resets else ""), "warn")
-                notify.desktop(msg, key="fallback:" + self.backend)
-                self.model, self.backend, self.fell_back = fb, roles.backend(fb), True
-                images, prompt = self.build(full=True)
-                mode = "fallback"
-                raw, self.tid = self.codex(prompt, images.files, keep=self.tracked)
+                got = self.other_account(e)
+                if got:
+                    (raw, self.tid), mode = got, "fresh(account)"
+                else:
+                    fb = self.fallback_model(e)
+                    if not fb:
+                        raise
+                    # retry this same request on the fallback; later requests go there directly for 15 min
+                    name = "Claude" if self.backend == "claude" else "Codex"
+                    store.kv_set("limited:" + self.backend, time.time() + 900)
+                    msg = f"{name} usage limit reached: {roles.LABEL.get(self.role, self.role)} switched to {fb}"
+                    self.ev("fallback", msg + (f" (resets at {e.resets})" if e.resets else ""), "warn")
+                    notify.desktop(msg, key="fallback:" + self.backend)
+                    self.model, self.backend, self.fell_back = fb, roles.backend(fb), True
+                    images, prompt = self.build(full=True)
+                    mode = "fallback"
+                    raw, self.tid = self.codex(prompt, images.files, keep=self.tracked)
             except Exception as e:
                 if not thread and not isinstance(e, CodexHung):
                     raise
@@ -206,7 +327,7 @@ class Turn:
             if r and (P.parse_decision(r) or {}).get("kind") == "tool_call":
                 raw, self.tid = r, t or self.tid
 
-        problems = repair.decision_problems(P.parse_decision(raw) or {}, tools, node_src)
+        problems = repair.decision_problems(P.parse_decision(raw) or {}, tools, node_src, self.own_images())
         for attempt in range(2):  # a broken call that reaches OS3 fails the step, so try twice
             if not problems:
                 break
@@ -215,7 +336,7 @@ class Turn:
             r, t = self.extra("fix", note.strip(), prompt + "\n\nYour reply was: " + raw[:4000] + note, images.files)
             if not r:
                 break
-            left = repair.decision_problems(P.parse_decision(r) or {}, tools, node_src)
+            left = repair.decision_problems(P.parse_decision(r) or {}, tools, node_src, self.own_images())
             self.ev("fix_result", f"{len(problems)} -> {len(left)} problem(s)")
             if len(left) < len(problems):
                 raw, self.tid, problems = r, t or self.tid, left
@@ -227,7 +348,7 @@ class Turn:
             r, t = self.extra("not_found", P.NOT_FOUND_NUDGE.strip(), prompt + "\n\nYour draft final answer was: " +
                               d.get("content", "")[:2000] + P.NOT_FOUND_NUDGE, images.files)
             d2 = (P.parse_decision(r) or {}) if r else {}
-            if d2.get("kind") in ("final", "tool_call") and not repair.decision_problems(d2, tools, node_src):
+            if d2.get("kind") in ("final", "tool_call") and not repair.decision_problems(d2, tools, node_src, self.own_images()):
                 self.ev("not_found_check", f"-> {d2.get('kind')}: {(d2.get('content') or str(d2.get('calls')))[:120]}")
                 raw, self.tid = r, t or self.tid
                 d = d2
@@ -236,7 +357,7 @@ class Turn:
             r, t = self.extra("verify", P.VERIFY_NUDGE.strip(), prompt + "\n\nYour draft final answer was: " +
                               d.get("content", "")[:2000] + P.VERIFY_NUDGE, images.files)
             d2 = (P.parse_decision(r) or {}) if r else {}
-            if d2.get("kind") in ("final", "tool_call") and not repair.decision_problems(d2, tools, node_src):
+            if d2.get("kind") in ("final", "tool_call") and not repair.decision_problems(d2, tools, node_src, self.own_images()):
                 self.ev("verify", f"-> {d2.get('kind')}: {(d2.get('content') or str(d2.get('calls')))[:120]}")
                 raw, self.tid = r, t or self.tid
         return raw
@@ -244,8 +365,10 @@ class Turn:
     def to_message(self, raw):
         self._result = ("text", [])
         if not self.tools:
+            if self.has_images and self.role == "background":  # e.g. OS3's image check: its answer decides if images work
+                self.ev("image_answer", f"{self.model}: {raw[:150]}")
             return {"role": "assistant", "content": raw}, "stop"
-        d = P.parse_decision(raw) or {}
+        d = self.hand_over_images(P.parse_decision(raw) or {})
         calls = d.get("calls") or ([d] if d.get("tool") else [])  # old single-call shape
         calls = [c for c in calls if isinstance(c, dict) and c.get("tool")]
         if d.get("kind") != "tool_call" or not calls:

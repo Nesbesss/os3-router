@@ -55,7 +55,7 @@ def fit_effort(model, effort):
     return min(m["efforts"], key=lambda e: abs(EFFORT_ORDER.index(e) - i) if e in EFFORT_ORDER else 99)
 
 
-def pick(cfg, role, requested, os3_effort=None):
+def pick(cfg, role, requested, os3_effort=None, images=False):
     """-> model string for the runners ("<slug>-<effort>"). The model comes from the role (or, with
     routing off, from OS3); the effort from OS3's reasoning slider when it sends one, else from the
     dashboard."""
@@ -66,6 +66,8 @@ def pick(cfg, role, requested, os3_effort=None):
         return model
     r = (cfg.get("roles") or {}).get(role) or {}
     model = r.get("model") or requested or cfg["model"]
+    if images and role == "background":  # e.g. OS3's image check (name 4 colour bands): the small model
+        model = ((cfg.get("roles") or {}).get("worker") or {}).get("model") or model  # misread it, then OS3 asked for another provider
     # OS3's sliders are Small and Standard; it sends Small's on background calls too, but those run
     # often and OS3 has no Background slider, so the dashboard decides there
     effort = (r.get("effort") or os3_effort if role == "background" else os3_effort or r.get("effort")) or cfg["effort"]

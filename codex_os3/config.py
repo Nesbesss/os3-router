@@ -30,6 +30,10 @@ DEFAULTS = {
     "watchdog": True,
     "restart_agent": True,    # watchdog may restart a stuck rabbit-agent
     "auto_update": True,      # install new releases from GitHub (tested first, zero downtime)
+    "codex_images": True,     # workers create images with Codex's own image generation (no paid image provider)
+    "engine": "exec",         # "appserver" (prototype): one long-running codex instead of one per request
+    "stream_chat": False,     # prototype, appserver only: stream the main chat's answer to OS3 as it's written
+    "compact_tokens": 0,      # prototype: codex summarizes a task's history above this many tokens (0 = its default)
     "fallback": {},           # role -> {model, effort} used while the role's subscription is at its limit
     "share_reports": None,    # anonymous problem reports to the developer: None = not asked yet
 }

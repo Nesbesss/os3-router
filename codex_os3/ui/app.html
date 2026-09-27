@@ -85,6 +85,8 @@ a.link { color: var(--accent); cursor: pointer; text-decoration: none; font-weig
 .list .when { color: var(--ink-3); font-size: 13px; white-space: nowrap; }
 .mrow { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 9px 0; border-top: 1px solid var(--line); }
 .mrow:first-of-type { border-top: 0; }
+.check { display: flex; align-items: center; gap: 8px; font-size: 14px; cursor: pointer; }
+.chip.acct.good { background: var(--good-soft); } .chip.acct.warn { background: var(--warn-soft); } .chip.acct.bad { background: var(--bad-soft); }
 .chip { display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 9px; border-radius: 99px; background: var(--soft); color: var(--ink-2); }
 .chip.chat { background: var(--accent-soft); color: var(--accent); } .chip.worker { background: #efe6fd; color: #7a4bd6; }
 @media (prefers-color-scheme: dark) { .chip.worker { background: #36294f; color: #c3a6ff; } }
@@ -194,6 +196,7 @@ input[type=range]::-moz-range-thumb { width: 22px; height: 22px; border-radius: 
   <div class="brand"><svg viewBox="0 0 1024 1024" aria-hidden="true"><rect width="1024" height="1024" rx="220" fill="#1b2340"/><path d="M250 330 L430 512 L250 694" stroke="#fff" stroke-width="80" fill="none" stroke-linecap="round" stroke-linejoin="round"/><path d="M520 694 H640 Q700 694 740 630 L800 520 M640 694 Q700 694 740 758 L800 860" stroke="#6f8cff" stroke-width="64" fill="none" stroke-linecap="round"/></svg><span>OS3 Router</span></div>
   <button class="nav" data-v="home"><svg viewBox="0 0 24 24"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg><span class="lbl">Home</span></button>
   <button class="nav" data-v="models"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M9 9h6v6H9z"/></svg><span class="lbl">Models</span></button>
+  <button class="nav" data-v="accounts"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18.5 14a6.5 6.5 0 0 1 3 6"/></svg><span class="lbl">Accounts</span></button>
   <button class="nav" data-v="activity"><svg viewBox="0 0 24 24"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg><span class="lbl">Activity</span></button>
   <button class="nav" data-v="setup"><svg viewBox="0 0 24 24"><path d="M9 11l3 3 8-8"/><path d="M20 12v7a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h10"/></svg><span class="lbl">Setup</span><i class="badge" id="setupbadge" hidden></i></button>
   <button class="nav" data-v="help"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6V14M12 17.5v.01"/></svg><span class="lbl">Help</span></button>
@@ -288,7 +291,7 @@ VIEWS.home = {async draw() {
       <div class="grow"><h1>${h.title}</h1><p>${esc(h.text)}</p></div>
       ${h.btn ? `<button class="btn primary big" data-go="${h.btn[1]}">${h.btn[0]}</button>` : ""}</div>
     <div class="grid">
-      ${(subs.length ? subs : [["codex", {}]]).map(([b, L]) => `<div class="card"><h2>${b === "claude" ? "Claude subscription" : "ChatGPT subscription"}</h2><div class="rings">${ring(L.p_pct, L.p_reset, "5 hours")}${ring(L.s_pct, L.s_reset, "This week")}</div></div>`).join("")}
+      ${(subs.length ? subs : [["codex", {}]]).map(([b, L]) => `<div class="card"><h2>${b === "claude" ? "Claude subscription" : b.startsWith("codex:") ? "ChatGPT · account " + esc(b.slice(6)) : "ChatGPT subscription"}</h2><div class="rings">${ring(L.p_pct, L.p_reset, "5 hours")}${ring(L.s_pct, L.s_reset, "This week")}</div></div>`).join("")}
       <div class="card"><h2>Today</h2><div class="bignum">${fmtN(today.total.i)}</div><div class="muted">tokens read · ${today.total.n} requests from OS3 · ${fmtN(today.total.o)} written</div>
         <div style="margin-top:14px">${(today.by_role || []).filter(r => ROLE[r.role]).map(r => `<div class="mrow"><span><span class="chip ${r.role}">${ROLE[r.role][0]}</span></span><span class="muted">${fmtN(r.i)} · ${r.n} calls</span></div>`).join("")}</div></div>
     </div>
@@ -339,6 +342,39 @@ VIEWS.models = {static: true, async draw() {
 
 // ---------------------------------------------------------------- activity
 let AV = "all";
+VIEWS.accounts = {static: true, async draw() {
+  const A = await api("accounts");
+  const state = (a) => a.limited ? ["bad", "At its limit"] : a.nearly_out ? ["warn", "Almost out"] : a.active ? ["good", "In use"] : ["", "Standby"];
+  const card = (a) => { const [cls, txt] = state(a), L = a.limits;
+    return `<div class="card"><div class="row" style="justify-content:space-between"><h2 style="margin:0">${a.id === "main" ? "Main account" : "Account " + esc(a.id)}</h2><span class="chip acct ${cls}">${txt}</span></div>
+      <p class="muted" style="margin:6px 0 12px">${esc(a.email || "ChatGPT account")}${a.plan ? " · " + esc(a.plan) : ""}</p>
+      ${L ? `<div class="rings">${ring(L.p_pct, L.p_reset, "5 hours")}${ring(L.s_pct, L.s_reset, "This week")}</div>` : `<p class="muted">Not used yet: its limits show up after its first request.</p>`}
+      ${a.id !== "main" ? `<div class="row" style="margin-top:12px"><button class="btn" data-rm="${esc(a.id)}">Remove</button></div>` : ""}</div>`; };
+  $("#view").innerHTML = `<h1>Accounts</h1><p class="sub">Add more ChatGPT accounts. The router uses one at a time and moves to the next when it's at ${A.switch_at}% or at its limit; once the first has room again it goes back. A conversation stays on its account as long as it can.</p>
+    <div class="grid">${A.accounts.map(card).join("")}</div>
+    <div class="card" id="addcard" style="margin-top:18px"><h2>Add a ChatGPT account</h2>
+      ${A.terms_accepted ? "" : `<div class="alert warn" style="margin:0 0 12px">${esc(A.terms)}</div><label class="check"><input type="checkbox" id="terms"> I understand and accept this</label>`}
+      <div class="row" style="margin-top:12px"><button class="btn primary" id="addacct" ${A.terms_accepted ? "" : "disabled"}>Add account</button></div>
+      <div id="login"></div></div>`;
+  const t = $("#terms"); if (t) t.onchange = () => { $("#addacct").disabled = !t.checked; };
+  document.querySelectorAll("[data-rm]").forEach(b => b.onclick = async () => {
+    if (!confirm("Remove account " + b.dataset.rm + "? The router stops using it; you can add it again later.")) return;
+    await post("accounts/remove", {id: b.dataset.rm}); toast("Account removed"); VIEWS.accounts.draw(); });
+  $("#addacct").onclick = async () => {
+    $("#addacct").disabled = true;
+    let r; try { r = await post("accounts/add", {accept_terms: !!(t && t.checked)}); } catch (e) { $("#login").innerHTML = `<div class="alert bad">${esc(e.message)}</div>`; $("#addacct").disabled = false; return; }
+    $("#login").innerHTML = `<div class="alert good" style="margin-top:14px"><b>1.</b> Open <a class="link" href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.url)}</a><br>
+      <b>2.</b> Sign in with the <b>other</b> ChatGPT account and enter this code:<div class="bignum" style="letter-spacing:.12em;margin:8px 0">${esc(r.code)}</div>
+      <span class="muted" id="loginst">Waiting for you to sign in… (up to 15 minutes)</span></div>`;
+    const poll = async () => { if (VIEW !== "accounts") return;
+      const s = await api("accounts/login?login=" + encodeURIComponent(r.login)).catch(() => ({status: "waiting"}));
+      if (s.status === "done") { toast("Account " + s.id + " added"); VIEWS.accounts.draw(); }
+      else if (s.status === "error" || s.status === "unknown") { $("#loginst").textContent = "Didn't work: " + (s.error || "the router restarted, try again"); $("#addacct").disabled = false; }
+      else setTimeout(poll, 2500); };
+    setTimeout(poll, 2500);
+  };
+}};
+
 VIEWS.activity = {async draw() {
   const [rs, ev] = await Promise.all([api("requests?limit=60"), api("events?limit=120")]);
   const what = (r) => r.source === "selftest" ? "Setup test" : r.status === "running" ? "Working…" : r.status === "gone" ? "Cancelled by OS3" : r.status === "limit" ? "Usage limit reached" : r.status === "error" ? "Failed" : r.result === "tool_call" ? "Used " + [...new Set(r.calls ? JSON.parse(r.calls) : [])].join(", ") : r.role === "background" ? "Memory / review" : "Answered";

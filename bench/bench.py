@@ -42,6 +42,10 @@ def make_page(n):
         f".textContent='{code}'\">Reveal code</button><p id='c' style='font-size:64px'></p></body></html>")
 
 
+PLANNER = os.environ.get("BENCH_PLANNER_URL", "")  # a school planner in Excel Online, one sheet tab per subject
+SUBJECTS = ("aardrijkskunde", "geography", "ak", "biologie", "biology", "frans", "french", "duits", "german",
+            "wiskunde", "math", "engels", "english", "geschiedenis", "history", "economie", "nederlands", "dutch")
+
 TASKS = {
     "textedit": dict(
         text="Open the TextEdit app on Bench-Mac, create a new document, type exactly "
@@ -64,6 +68,24 @@ TASKS = {
         pre=lambda n: make_page(n),
         check=lambda n, final: CODES.get(n, "x") in final,
         post=lambda n: [os.remove(f) for f in glob.glob(os.path.expanduser(f"~/bench-pages/bench-{n}.html"))]),
+    "planner": dict(  # the real-life failure: content drawn by Excel Online, subjects on separate sheet tabs
+        text="In Google Chrome on Bench-Mac, the homework planner (A3 Planner 2026_2027, Excel Online) is open. "
+             "It has one sheet tab per subject in the bar at the bottom; it opens on the Dutch tab (A3-Ne). "
+             "Go through the subject tabs one by one and list every test (toets, SO, PW, leestoets, "
+             "proefwerk, exam) you find: subject, week/date and what it is. Report the full list.",
+        pre=lambda n: [subprocess.run(["open", "-a", "Google Chrome", PLANNER]), time.sleep(10)],
+        check=lambda n, final: ("toets" in final.lower() or "test" in final.lower())
+                               and sum(s in final.lower() for s in SUBJECTS) >= 3,
+        post=lambda n: None, steps=70),
+    "planner2": dict(  # short version for A/B runs: two tabs, same screen as the full task
+        text="In Google Chrome on Bench-Mac, the homework planner (A3 Planner 2026_2027, Excel Online) is open. "
+             "It has one sheet tab per subject in the bar at the bottom. Open only these two tabs: A3-Ak "
+             "(aardrijkskunde) and A3-Na. On each, list every test (toets, SO, PW, leestoets, proefwerk, exam) "
+             "you find: subject, week/date and what it is. Report the list.",
+        pre=lambda n: [subprocess.run(["open", "-a", "Google Chrome", PLANNER]), time.sleep(10)],
+        check=lambda n, final: any(w in final.lower() for w in ("toets", "so ", "pw", "test"))
+                               and "ak" in final.lower() and "na" in final.lower(),
+        post=lambda n: None, steps=30),
     "chrome": dict(
         text="In Google Chrome on Bench-Mac, open a new tab, go to https://example.com, "
              "report the main heading shown on that page, then close that tab again.",
@@ -144,7 +166,7 @@ def run(task, n, model):
     msgs = [TPL["system"], {"role": "user", "content": [{"type": "text", "text": f"<task>{text}</task>"}]}]
     stats = {"calls": [], "errors": [], "asked": 0}
     t0, final, steps = time.time(), "", 0
-    for steps in range(1, MAX_STEPS + 1):
+    for steps in range(1, T.get("steps", MAX_STEPS) + 1):
         try:
             m = post({"model": model, "tools": TPL["tools"], "messages": msgs})
         except Exception as e:

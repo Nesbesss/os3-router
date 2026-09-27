@@ -3,9 +3,18 @@
 # os3-router
 
 Use your **Codex / ChatGPT subscription** and/or your **Claude Code** login as the LLM for **rabbit OS3**:
-chat, tool calling, workers and computer use. Mix them per role, e.g. `gpt-6-luna` for the main chat and
-`claude-sonnet-5` for the workers. It includes a local dashboard, token and limit tracking, a watchdog that
-repairs a stuck rabbit-agent, and a menu bar app on macOS.
+chat, tool calling, workers, browser and computer use, and **image generation and editing**, all on the
+subscription you already pay for. Mix them per role, e.g. `gpt-6-luna` for the main chat and `claude-sonnet-5`
+for the workers. It includes the OS3 Router app, token and limit tracking, a watchdog that repairs a stuck
+rabbit-agent, and automatic updates.
+
+**Highlights**
+- **Your subscription, not an API bill:** Codex (ChatGPT Plus/Pro) and Claude Code logins, per role
+- **Images included:** rabbit makes and edits pictures with Codex's own image generation, no paid image provider
+- **Browser and computer use that doesn't give up:** workers look at the screen when a page can't be read
+  (Excel Online, Google Docs, canvas apps) and check again before saying something isn't there
+- **Keeps working:** watchdog for the rabbit-agent tunnel, fallback model at the usage limit, automatic updates
+  that test themselves before switching over
 
 ```
 OS3 cloud ──▶ rabbit-agent (your machine) ──▶ os3-router (localhost:11435) ──▶ codex exec / claude -p ──▶ your subscription
@@ -41,7 +50,7 @@ The installer:
 
 Then open the dashboard (`http://localhost:11435`): the **setup wizard** walks you through OS3 step by step
 with screenshots, checks each step live, and has a **Test my setup** button. In short, in OS3 go to
-**Settings → API keys**, provider **Local model**, and enter:
+**Settings → API keys**, provider **local** (Local model), and enter:
 
 | field | value |
 |---|---|
@@ -97,11 +106,44 @@ Codex is an agent CLI, not a chat API, so the router does a lot of translation:
   to be fixed.
 - **Self-checks:** a false "tool not available" gets one retry, "done" after computer use gets one
   verify pass, and a screenshot loop gets a nudge. These extra steps can never make a request fail.
+- **Browser workers that look:** when a web page's text comes back empty (Excel/Word Online, Google Docs, apps
+  that draw their content), workers switch to screenshots and click through like a person; a "couldn't find it"
+  after browsing gets one more careful look first
 - **Hang handling:** no Codex activity for 90 s means the call is killed and retried once
 - **Usage limit** shows up in OS3 as a clear message with the reset time, not "something went wrong"
 - **Zero-downtime updates:** upgrades swap the worker process while running requests finish
 - **Automatic updates:** every 30 min it checks for a new release, runs that release's tests on your machine,
-  and only then switches over (keeps the previous version; off in Settings)
+  and only then switches over (keeps the previous version; off in Settings; see [Updates](#updates))
+
+## Images: generate and edit with your subscription
+
+OS3's newest version asks for a paid image provider when a task needs a picture (the *"Generate images"*
+card). With the router you don't need one: when rabbit is asked to draw, generate or edit an image, the
+worker uses **Codex's built-in image generation** and hands the file to OS3, which shows it to you.
+
+- **Generate:** "make an image of a red apple"
+- **Edit (image to image):** send rabbit a photo and ask for a change ("make the apple blue")
+- It counts toward your normal Codex limit (about 1% of a Plus 5-hour window per image in our tests) and takes
+  roughly 30–60 seconds
+- If the model makes the image but forgets to hand it over, the router hands it over itself
+- Switch it off with `codex_images: false`; with a Claude model as worker, OS3's own image tool is used
+
+OS3 also checks whether the model can **see** images before a worker may use screenshots (it asks for the
+colours of four bands in a test picture, the *"Understand images"* card if it fails). The router answers that
+check with your worker model, so browser and computer use work without an extra provider.
+
+## Updates
+
+The router checks for a new release every 30 minutes, runs that release's own tests on your machine, and only
+then switches over, without dropping running requests. The previous version is kept.
+
+**Stuck on an old version** (updates failing with `CERTIFICATE_VERIFY_FAILED`)? Some Python installs have no
+root certificates; since 0.4.7 the router works around that, but a router older than 0.4.7 needs **one** manual
+update, after which it updates itself again:
+- **macOS:** double-click *Install Certificates.command* in Applications → Python 3.x, or rerun the install command
+- **Windows:** rerun `irm https://raw.githubusercontent.com/Nesbesss/os3-router/main/install.ps1 | iex` in PowerShell
+
+Rerunning the install command always updates to the latest release and keeps your settings and API key.
 
 ## The OS3 Router app (macOS)
 
@@ -150,6 +192,9 @@ model list), so it may differ per account and changes when OpenAI adds models. T
 | `gpt-6-sol` | Workhorse model for coding and everyday work | **Standard** (workers): multi-step tasks, computer use |
 | `gpt-6-astra` | Frontier intelligence for the most demanding work | hard worker tasks; uses the most of your limit |
 | `gpt-5.6-luna` / `gpt-5.6-sol` / `gpt-5.5` | older generations | fallback |
+| `claude-sonnet-5` | Claude Code · balanced | **Standard** (workers) |
+| `claude-opus-5-5` / `claude-fable-5-1` | Claude Code · most capable | hard worker tasks; uses the most of your limit |
+| `claude-haiku-4-5` | Claude Code · fastest | **Background** |
 
 Each model offers its own **effort** levels (from `low` up to `max` or `ultra`); higher is slower and uses
 more of your 5-hour and weekly limits. Suggested starting point: Small = `gpt-6-luna` medium,
@@ -162,10 +207,6 @@ worker task depends on exact numbers from the screen, double-check them or use a
 In OS3 itself, the model id you enter (e.g. `gpt-6-luna`) only matters when per-role models are switched
 off in the dashboard; then that one model is used for everything. Append an effort to it if you like,
 e.g. `gpt-6-sol-high`.
-
-| `claude-sonnet-5` | Claude Code · balanced | **Standard** (workers) |
-| `claude-opus-5-5` / `claude-fable-5-1` | Claude Code · most capable | hard worker tasks; uses the most of your limit |
-| `claude-haiku-4-5` | Claude Code · fastest | **Background** |
 
 The logo is an original mark (a terminal prompt whose cursor branches into two routes); os3-router is not
 affiliated with or endorsed by OpenAI, Anthropic or rabbit.
@@ -197,7 +238,11 @@ The router does not load your `~/.claude/settings.json`; it uses the login you m
 | OS3: *"The device is offline or the local endpoint is unreachable"* when saving | the router must run on the **device you selected** in OS3, and the endpoint must be `http://localhost:11435/v1`. Check `os3-router doctor` on that machine. |
 | OS3: *"This model did not make a tool call"* when saving | make sure the **API key** field holds the router's key and `os3-router doctor` is all ✓ (an outdated Codex CLI is the usual cause), then save again; the check is a live model call, so an occasional retry is normal |
 | OS3: *"Local LLM device can't be reached"* during tasks | the rabbit-agent's tunnel died; the watchdog restarts the agent automatically within ~2 min, or use *Restart rabbit-agent* in the dashboard / menu bar |
-| *"Codex / Claude usage limit reached — resets at …"* | your plan's 5-hour or weekly limit; the dashboard shows both per subscription. Use lighter models/effort per role, or move a role to the other subscription |
+| *"Codex / Claude usage limit reached — resets at …"* | your plan's 5-hour or weekly limit; the app shows both per subscription. Use lighter models/effort per role, set a fallback model, or move a role to the other subscription |
+| OS3 shows an *"Understand images"* card asking for a provider | update to **0.4.8+**: the router then passes OS3's image check itself |
+| OS3 shows a *"Generate images"* card asking for a provider | update to **0.4.9+**: images are made with your Codex subscription |
+| updates fail with `CERTIFICATE_VERIFY_FAILED` | Python without root certificates; update once by hand (see [Updates](#updates)), 0.4.7+ handles it |
+| a worker fails at the end with *"unhashable type: 'dict'"* | a bug in 0.4.10, fixed in **0.4.11** (updates itself) |
 | installer says *run this in Terminal on the Mac itself* | macOS services started over SSH lose their permissions; run it locally |
 | dashboard shows *Codex CLI version* ✗ | `npm i -g @openai/codex@latest` (older CLIs reject the current models) |
 | something else | open an issue with `os3-router doctor` output and a log export (dashboard → Tasks & export) |
@@ -260,5 +305,7 @@ expensive in Codex quota; never run it in CI.
 
 CI runs the full test suite on macOS, Linux and Windows with Python 3.9 and 3.12, against a fake Codex
 CLI (no quota), plus end-to-end installer runs on Linux and Windows.
+
+What changed in each version: [CHANGELOG.md](CHANGELOG.md) (the app also shows *What's new* after an update).
 
 MIT license.

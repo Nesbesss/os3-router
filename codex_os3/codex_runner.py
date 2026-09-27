@@ -2,7 +2,7 @@
 the account's rate limits."""
 import json, os, re, subprocess, tempfile, threading, time
 
-from . import config, platform_util, sessions, store
+from . import accounts, config, platform_util, sessions, store
 
 WORKDIR = os.path.join(config.HOME, "work")
 
@@ -64,16 +64,18 @@ def known_features(codex):
     return _known[codex]
 
 
-def build_cmd(cfg, model, schema_file=None, image_files=(), resume=None):
+def build_cmd(cfg, model, schema_file=None, image_files=(), resume=None, image_gen=False):
     model, effort = split_model(model, cfg["effort"])
     codex = platform_util.native_bin(cfg.get("codex_bin") or "codex")
     known = known_features(codex)
-    disabled = [f for f in DISABLED if f in known] if known else list(DISABLED)
+    disabled = [f for f in DISABLED if (f in known or not known) and not (image_gen and f == "image_generation")]
     cmd = [codex, "exec", *(["resume"] if resume else []), "--json",
            "--skip-git-repo-check", "--ignore-user-config", "--ignore-rules",
            *[a for f in disabled for a in ("--disable", f)],
            *([] if resume else ["-s", "read-only", "-C", WORKDIR]), "-m", model,
            "-c", f"model_reasoning_effort={json.dumps(effort)}"]
+    if cfg.get("compact_tokens"):  # summarize long task histories sooner: smaller, faster steps
+        cmd[-2:-2] = ["-c", f"model_auto_compact_token_limit={int(cfg['compact_tokens'])}"]
     if schema_file:
         cmd += ["--output-schema", schema_file]
     if image_files:
@@ -103,8 +105,10 @@ def idle_limit(cfg, effort, role=None):
 RESET_RE = re.compile(r"try again (?:at|in) ([^.\"\\]+)", re.I)
 
 
-def last_rate_limits(thread):
-    """Newest rate_limits (5h primary / weekly secondary) from the session's rollout."""
+def last_token_count(thread):
+    """(rate_limits, last turn's usage) from the session rollout's newest token_count event.
+    rate_limits = 5h primary / weekly secondary. The usage matters for resumed sessions: exec's
+    own turn.completed usage is the thread's running total, which overstated every resumed step."""
     for f in sessions.rollout_files(thread):
         try:
             with open(f, "rb") as fh:
@@ -115,14 +119,15 @@ def last_rate_limits(thread):
         for line in reversed(tail):
             if '"rate_limits"' in line:
                 try:
-                    e = json.loads(line)
-                    return (e.get("payload") or {}).get("rate_limits")
+                    p = json.loads(line).get("payload") or {}
                 except ValueError:
                     continue
-    return None
+                return p.get("rate_limits"), (p.get("info") or {}).get("last_token_usage")
+    return None, None
 
 
-def run(cfg, prompt, model, schema=None, alive=lambda: True, images=(), resume=None, keep=False, role=None):
+def run(cfg, prompt, model, schema=None, alive=lambda: True, images=(), resume=None, keep=False, role=None, account=None,
+        image_gen=False):
     """-> (text, usage, thread, rate_limits). Raises ClientGone, CodexHung, UsageLimit,
     RuntimeError."""
     os.makedirs(WORKDIR, exist_ok=True)
@@ -142,7 +147,9 @@ def run(cfg, prompt, model, schema=None, alive=lambda: True, images=(), resume=N
             f.close()
             tmp.append(f.name)
             img_files.append(f.name)
-        cmd = build_cmd(cfg, model, schema_file, img_files, resume)
+        cmd = build_cmd(cfg, model, schema_file, img_files, resume, image_gen)
+        if resume:
+            wait_exiting(resume)
 
         sem = slots(cfg["max_codex"])
         while not sem.acquire(timeout=2):
@@ -150,7 +157,8 @@ def run(cfg, prompt, model, schema=None, alive=lambda: True, images=(), resume=N
                 raise ClientGone()
         try:
             idle = idle_limit(cfg, split_model(model, cfg["effort"])[1], role)
-            out, err_lines, thread = _supervise(dict(cfg, hang_idle_s=idle), cmd, prompt, alive, resume)
+            out, err_lines, thread = _supervise(dict(cfg, hang_idle_s=idle), cmd, prompt, alive, resume, env=accounts.env(account),
+                                                final=codex_done, detach=True)
         finally:
             sem.release()
     finally:
@@ -176,7 +184,9 @@ def run(cfg, prompt, model, schema=None, alive=lambda: True, images=(), resume=N
         elif t in ("error", "turn.failed"):  # keep all: the first one usually has the details
             errs.append(e.get("message") or json.dumps(e.get("error", "")))
 
-    limits = last_rate_limits(thread) if thread else None
+    limits, last = last_token_count(thread) if thread else (None, None)
+    if resume and last:
+        usage = {k: last.get(k, 0) for k in ("input_tokens", "cached_input_tokens", "output_tokens", "reasoning_output_tokens")}
     if thread and not keep and not resume:  # one-off call: don't leave history behind
         for f in sessions.rollout_files(thread):
             try:
@@ -194,13 +204,16 @@ def run(cfg, prompt, model, schema=None, alive=lambda: True, images=(), resume=N
     return "\n".join(text), usage, thread, limits
 
 
-def _supervise(cfg, cmd, prompt, alive, thread, cwd=None, final=None, env=None):
+def _supervise(cfg, cmd, prompt, alive, thread, cwd=None, final=None, env=None, detach=False):
     """Run a backend CLI, killing it when the client leaves or it stops showing activity
-    (new stdout event or its session file growing). `final` marks the last stdout event
-    for CLIs that keep running after answering (claude with stream-json input)."""
+    (new stdout event or its session file growing). Returns as soon as `final(line)` says the
+    answer is complete: with detach=True the CLI finishes its own shutdown in the background
+    (codex spends 1-2 s exiting after its answer), otherwise it is stopped (claude with
+    stream-json input keeps running)."""
     p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.PIPE, cwd=cwd, env=env,
                          text=True, encoding="utf-8", errors="replace", **platform_util.popen_group_kwargs())
     out, err = [], []
+    done, answered = threading.Event(), threading.Event()
 
     def feed():
         try:
@@ -208,12 +221,12 @@ def _supervise(cfg, cmd, prompt, alive, thread, cwd=None, final=None, env=None):
             p.stdin.close()
         except (OSError, ValueError):
             pass
-    state = {"last": time.time(), "thread": thread, "done": False}
+    state = {"last": time.time(), "thread": thread}
 
     def read_out():
-        for line in p.stdout:
+        for line in p.stdout:  # keeps draining after the answer, so a detached CLI can't block on a full pipe
             line = line.strip()
-            if line.startswith("{"):
+            if line.startswith("{") and not answered.is_set():
                 out.append(line)
                 state["last"] = time.time()
                 if '"thread.started"' in line or not state["thread"] and '"session_id"' in line:
@@ -222,9 +235,10 @@ def _supervise(cfg, cmd, prompt, alive, thread, cwd=None, final=None, env=None):
                         state["thread"] = e.get("thread_id") or e.get("session_id") or state["thread"]
                     except ValueError:
                         pass
-                if final and final in line:
-                    state["done"] = True
-                    return
+                if final and final(line):
+                    answered.set()
+                    done.set()
+        done.set()  # EOF: the CLI exited
 
     def read_err():
         for line in p.stderr:
@@ -237,8 +251,7 @@ def _supervise(cfg, cmd, prompt, alive, thread, cwd=None, final=None, env=None):
         r.start()
     start, rollout = time.time(), None
     try:
-        while p.poll() is None and not state["done"]:
-            time.sleep(1)
+        while not done.wait(1):  # wakes immediately when the answer (or EOF) arrives
             if not alive():
                 raise ClientGone()
             if rollout is None and state["thread"]:
@@ -255,9 +268,38 @@ def _supervise(cfg, cmd, prompt, alive, thread, cwd=None, final=None, env=None):
         platform_util.kill_tree(p)  # wrapper + native codex child
         p.wait()
         raise
-    if state["done"] and p.poll() is None:
+    if answered.is_set() and p.poll() is None:
+        if detach:
+            threading.Thread(target=p.wait, daemon=True).start()  # reap it when it's done shutting down
+            if state["thread"]:
+                _exiting[state["thread"]] = p
+            return list(out), list(err), state["thread"]
         platform_util.kill_tree(p)
         p.wait()
+    p.wait()
     for r in readers:
         r.join(timeout=5)
     return out, err, state["thread"]
+
+
+_exiting = {}  # thread id -> codex process still shutting down after its answer
+
+
+def wait_exiting(thread, timeout=10):
+    """A resume must not read the session while the previous codex is still writing it."""
+    p = _exiting.pop(thread, None)
+    if p is not None:
+        try:
+            p.wait(timeout)
+        except subprocess.TimeoutExpired:
+            pass
+
+
+def codex_done(line):
+    """codex --json: the turn's last event."""
+    if "turn.completed" not in line and "turn.failed" not in line:
+        return False
+    try:
+        return json.loads(line).get("type") in ("turn.completed", "turn.failed")
+    except ValueError:
+        return False

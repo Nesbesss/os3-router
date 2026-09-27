@@ -32,6 +32,11 @@ def main(argv):
         except (AttributeError, ValueError):
             pass
     cmd = argv[0] if argv else "status"
+    try:
+        from .platform_util import https_certs
+        https_certs()
+    except Exception:  # never block startup over certificates
+        pass
     if cmd in ("serve", "worker"):
         _log_without_console()
     if cmd == "serve":

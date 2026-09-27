@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.5.0-prototype (2026-09-27)
+- **Prototype, being tested on the Mac mini.** Not released.
+- **Much less usage in chat:** the main chat keeps its Codex thread between messages instead of starting over,
+  so almost all of the conversation is reused from the cache (92% cached instead of 51% on real traffic).
+- **Faster:** one Codex process stays running instead of starting a new one for every request
+  (setting `engine: appserver`); chat replies and worker steps are about 1.5–2× faster.
+- **OS3's image check** (name four colour bands) now runs on the worker model, so OS3 stops asking for a paid
+  image provider.
+- **Browser workers** get the browser tool's step order spelled out (open, probe, connect, then page commands).
+- **Token counts** on the dashboard are per step again (continued steps were counted as running totals).
+
+## 0.4.11 (2026-09-27)
+- **Fix for 0.4.10:** workers could fail at the very end with "unhashable type: 'dict'" when they reported their
+  result files. OS3 describes each file as an object (node, path, deliver to user); the router now reads and writes
+  that format, and handing over generated images can never fail a task anymore.
+
+## 0.4.10 (2026-09-27)
+- **Generated images always reach you.** If the model makes an image but forgets to hand it to OS3, the router now
+  hands it over itself. Editing images works too: send rabbit a photo and ask for a change.
+
+## 0.4.9 (2026-09-27)
+- **Image generation with your ChatGPT subscription.** When you ask rabbit for an image, the worker now creates it
+  with Codex's own image generation (it counts toward your normal Codex limit) and hands the file to OS3, instead
+  of OS3 asking you to connect a paid image provider ("Generate images" card). Turn it off with `codex_images: false`.
+  With Claude as the model, OS3's own image tool is still used.
+
+## 0.4.8 (2026-09-27)
+- **Computer use and browser tasks work again with OS3's newest version.** OS3 now checks whether the model can
+  read images (it asks for four colour bands) before a worker may look at screenshots. The small background model
+  often misread that check, and OS3 then asked you to connect a paid image provider. Background calls that
+  contain an image now run on your worker model (Standard), which passes the check.
+
+## 0.4.7 (2026-09-27)
+- **Automatic updates work again on Macs and PCs where they failed with `CERTIFICATE_VERIFY_FAILED`.** Some Python
+  installs have no root certificates (the python.org Python on macOS until "Install Certificates" is run; on Windows,
+  Python only sees certificates Windows already downloaded). The router now uses macOS's own certificates when
+  Python has none, and downloads updates with the system's `curl` if Python's download still fails on a certificate.
+- **Stuck on an older version?** Update once by hand, after that it updates itself again. Mac: double-click
+  "Install Certificates.command" in Applications → Python 3.x, or rerun the install command. Windows: rerun
+  `irm https://raw.githubusercontent.com/Nesbesss/os3-router/main/install.ps1 | iex` in PowerShell.
+
 ## 0.4.6 (2026-09-27)
 - **Workers give up less on web pages:** when a page's text can't be read (Excel, Word or Google Docs online,
   apps that draw their content), workers now look at the screen and click through like a person, for
