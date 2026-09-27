@@ -146,6 +146,19 @@ class Service(unittest.TestCase):
         finally:
             self.api_post("config", body={"fallback": {}})
 
+    def test_browser_worker_does_not_give_up_on_visible_things(self):
+        browse = {"type": "function", "function": {"name": "dummy_system", "description": "drive the browser",
+                                                   "parameters": {"type": "object", "properties": {}}}}
+        msgs = [{"role": "system", "content": "You are a worker agent."},
+                {"role": "user", "content": "FAKE_NOTFOUND open the geography tab"},
+                {"role": "assistant", "content": None, "tool_calls": [{"id": "c1", "type": "function",
+                 "function": {"name": "dummy_system", "arguments": "{}"}}]},
+                {"role": "tool", "tool_call_id": "c1", "content": '{"content": ""}'}]
+        d = self.post({"tools": WEATHER + [browse], "messages": msgs})["choices"][0]["message"]
+        self.assertTrue(d.get("tool_calls"), d)  # the "couldn't find" draft was sent back for one more look
+        kinds = [e["kind"] for e in self.get("/api/events?limit=20")]
+        self.assertIn("not_found_check", kinds)
+
     def test_hang_is_killed(self):
         t = time.time()
         with self.assertRaises(urllib.error.HTTPError) as e:

@@ -38,6 +38,66 @@ RETRY_NUDGE = (
 
 
 OBSERVE_SCRIPTS = ("capture.py", "probe.py")
+
+# Browser work (OS3's dummy_system drives the user's browser): models keep reading page code and
+# give up when the text isn't in it (Excel/Word Online, Google Docs, canvas apps draw it), even with
+# a screenshot in front of them that shows where to click.
+BROWSER_GUIDE = (
+    "Working in web pages: if reading the page text comes back empty, partial or unrelated (Excel, "
+    "Word or PowerPoint Online, Google Docs/Sheets, canvas apps, embedded frames, other tabs of a "
+    "workbook), do not keep probing the page code. Look at a screenshot and work like a person: click "
+    "the visible control that leads to the content (sheet tabs at the bottom of a spreadsheet, menu "
+    "items, sections, 'show more'), scroll, or use the app's own search (Ctrl+F), then look again. For "
+    "Office Online files, File > Download a copy and read the file with the shell. Before you say "
+    "something isn't there, check every tab/section and the newest screenshot.")
+VISUAL_TOOLS = ("dummy_system_image", "feed_image")
+PROBE_LIMIT = 8
+
+
+def probe_streak(messages):
+    """Browser (dummy_system) calls since the model last looked at a screenshot."""
+    n = 0
+    for m in reversed(messages):
+        if m.get("role") != "assistant":
+            continue
+        names = [c.get("function", {}).get("name", "") for c in (m.get("tool_calls") or [])]
+        if not names or any(x in VISUAL_TOOLS for x in names):
+            break
+        if not all(x.startswith("dummy_system") for x in names):
+            break
+        n += 1
+    return n
+
+
+PROBE_NUDGE = (
+    "\n\nCHECK YOUR APPROACH: your last {n} steps probed the web page without looking at it. If "
+    "what you need isn't in the page text, take a screenshot now (dummy_system_image), find it "
+    "visually and click there (e.g. the right sheet tab, section or menu item) instead of more code probes.")
+
+NOT_FOUND = re.compile(
+    r"(couldn[\u2019']?t|could not|cannot|can[\u2019']?t|unable to|wasn[\u2019']?t able to|did ?n[\u2019']?o?t|"
+    r"failed to) (find|locate|see|spot|read|access the content)|not (found|visible|present|listed|there)|"
+    r"(does|do)(n[\u2019']?t| not) (appear|exist|show)|"
+    r"niet (gevonden|vinden|zien|te vinden|zichtbaar)|kon .{0,40} niet|nergens",
+    re.I)
+
+
+def claims_not_found(content):
+    return bool(NOT_FOUND.search(content or ""))
+
+
+def used_browser(msgs):
+    return any(c.get("function", {}).get("name", "").startswith("dummy_system") or
+               c.get("function", {}).get("name") == "computer_use"
+               for m in msgs for c in (m.get("tool_calls") or []))
+
+
+NOT_FOUND_NUDGE = (
+    "\n\nBEFORE YOU GIVE UP: your draft says something could not be found. People can usually see it. "
+    "Check the newest screenshot carefully (take one if you have none). Look in other tabs, sheets, "
+    "sections, collapsed items and further down the page, try the app's own search (Ctrl+F), and "
+    "click through like a person would. Continue with tool calls if any of that is left to try; only "
+    "reply kind=\"final\" once you have really checked, and then say exactly where you looked.")
 LOOP_LIMIT = 3
 
 
@@ -161,6 +221,8 @@ def flatten(messages, tools, images=None, header=True, all_messages=None):
             f = t.get("function", t)
             lines.append(f"- {f.get('name')}: {f.get('description','')}\n"
                          f"  parameters: {json.dumps(f.get('parameters', {}))}")
+        if any(t.get("function", t).get("name", "").startswith("dummy_system") for t in tools):
+            out.append(BROWSER_GUIDE)
         out.append("The application's tools are listed below. They are NOT part of your own built-in tool "
                    "list, so you will not see them there: you call one by answering with kind=\"tool_call\" "
                    "and its name in `calls`, and the application runs it. Every tool below is available.\n"

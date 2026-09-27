@@ -504,5 +504,29 @@ class MacAppUpdateTest(unittest.TestCase):
             os.environ["HOME"] = old_home
 
 
+class BrowserBehaviourTest(unittest.TestCase):
+    def test_not_found_phrases(self):
+        for s in ("I couldn't find Extreme weather on the page.", "The lesson is not listed.",
+                  "Ik kon 'Extreem weer' niet vinden in de planner.", "Extreem weer is niet gevonden",
+                  "I was unable to locate the geography tab"):
+            self.assertTrue(P.claims_not_found(s), s)
+        for s in ("Found it: 1.2 Extreem weer, 42% done.", "Opened the geography tab and read lesson 1.2."):
+            self.assertFalse(P.claims_not_found(s), s)
+
+    def test_probe_streak_counts_until_a_look(self):
+        call = lambda n: {"role": "assistant", "tool_calls": [{"function": {"name": n, "arguments": "{}"}}]}
+        res = {"role": "tool", "content": "{}"}
+        msgs = [call("dummy_system_image"), res] + [call("dummy_system"), res, call("dummy_system_result"), res] * 4
+        self.assertEqual(P.probe_streak(msgs), 8)
+        self.assertEqual(P.probe_streak(msgs + [call("dummy_system_image"), res]), 0)
+        self.assertEqual(P.probe_streak([call("shell"), res, call("dummy_system"), res]), 1)
+
+    def test_browser_guide_only_with_browser_tools(self):
+        fn = lambda n: {"type": "function", "function": {"name": n, "parameters": {}}}
+        msgs = [{"role": "user", "content": "hi"}]
+        self.assertIn("sheet tabs", P.flatten(msgs, [fn("dummy_system"), fn("shell")]))
+        self.assertNotIn("sheet tabs", P.flatten(msgs, [fn("shell")]))
+
+
 if __name__ == "__main__":
     unittest.main()

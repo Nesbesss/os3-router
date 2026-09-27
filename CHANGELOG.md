@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.6 (2026-09-27)
+- **Workers give up less on web pages:** when a page's text can't be read (Excel, Word or Google Docs online,
+  apps that draw their content), workers now look at the screen and click through like a person, for
+  example the right sheet tab of a spreadsheet, instead of endlessly reading page code
+- If a worker says it "couldn't find" something after browsing, it first takes one more careful look
+  (other tabs and sections, the newest screenshot, the page's own search)
+
 ## 0.4.5 (2026-09-27)
 - **Background tasks in OS3:** long memory updates (like saving what OS3 learned about you) no longer get stopped halfway as "hung". The router now gives these background calls up to 5 minutes of quiet time while the answer is being written, instead of 90 seconds. Chats and normal tasks still get the fast check.
 

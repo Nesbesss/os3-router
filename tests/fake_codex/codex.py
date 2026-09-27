@@ -2,7 +2,7 @@
 """Stand-in for the Codex CLI in tests: same flags, JSON events and rollout files, no network.
 Prompt triggers: FAKE_LIMIT (usage limit error), FAKE_HANG (sleep forever), FAKE_FINAL (final
 answer instead of a tool call), FAKE_BADJSON (invalid tool-call arguments), FAKE_LIMIT_SOL (usage
-limit only for *sol* models)."""
+limit only for *sol* models), FAKE_NOTFOUND (gives up with "couldn't find" until nudged)."""
 import json, os, sys, time, uuid
 
 a = sys.argv[1:]
@@ -37,7 +37,9 @@ if "FAKE_LIMIT" in prompt and ("FAKE_LIMIT_SOL" not in prompt or "sol" in model)
 if "FAKE_HANG" in prompt:
     time.sleep(3600)
 
-if "--output-schema" in a and "FAKE_FINAL" not in prompt:
+if "FAKE_NOTFOUND" in prompt and "BEFORE YOU GIVE UP" not in prompt and "--output-schema" in a:
+    text = json.dumps({"kind": "final", "calls": [], "content": "I couldn't find Extreme weather on the page."})
+elif "--output-schema" in a and "FAKE_FINAL" not in prompt:
     args = '{"location": "Oslo"' if "FAKE_BADJSON" in prompt else '{"location":"Oslo"}'
     text = json.dumps({"kind": "tool_call", "content": "", "calls": [{"tool": "get_weather", "arguments_json": args}]})
 elif "--output-schema" in a:

@@ -87,6 +87,10 @@ class Turn:
         if streak >= P.LOOP_LIMIT:
             p += P.LOOP_NUDGE.format(n=streak)
             self.ev("loop_nudge", f"{streak} observe-only turns, nudging to act")
+        probes = P.probe_streak(self.msgs) if self.tools else 0
+        if probes >= P.PROBE_LIMIT and probes % 4 == 0:  # not every turn: once, then every 4 more probes
+            p += P.PROBE_NUDGE.format(n=probes)
+            self.ev("probe_nudge", f"{probes} browser probes without a screenshot, nudging to look")
         return imgs, p
 
     def codex(self, prompt, images=(), resume=None, keep=False):
@@ -217,6 +221,16 @@ class Turn:
                 raw, self.tid, problems = r, t or self.tid, left
 
         d = P.parse_decision(raw) or {}
+        if d.get("kind") == "final" and P.used_browser(self.msgs) and P.claims_not_found(d.get("content", "")):
+            # models give up on things people can see (other tab, canvas app, further down): one more look
+            self.ev("not_found_check", d.get("content", "")[:160])
+            r, t = self.extra("not_found", P.NOT_FOUND_NUDGE.strip(), prompt + "\n\nYour draft final answer was: " +
+                              d.get("content", "")[:2000] + P.NOT_FOUND_NUDGE, images.files)
+            d2 = (P.parse_decision(r) or {}) if r else {}
+            if d2.get("kind") in ("final", "tool_call") and not repair.decision_problems(d2, tools, node_src):
+                self.ev("not_found_check", f"-> {d2.get('kind')}: {(d2.get('content') or str(d2.get('calls')))[:120]}")
+                raw, self.tid = r, t or self.tid
+                d = d2
         if d.get("kind") == "final" and P.used_computer(self.msgs):
             # models declare "done" without checking (saved? right value?); one self-check
             r, t = self.extra("verify", P.VERIFY_NUDGE.strip(), prompt + "\n\nYour draft final answer was: " +
