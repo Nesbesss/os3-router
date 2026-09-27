@@ -64,11 +64,11 @@ def known_features(codex):
     return _known[codex]
 
 
-def build_cmd(cfg, model, schema_file=None, image_files=(), resume=None):
+def build_cmd(cfg, model, schema_file=None, image_files=(), resume=None, image_gen=False):
     model, effort = split_model(model, cfg["effort"])
     codex = platform_util.native_bin(cfg.get("codex_bin") or "codex")
     known = known_features(codex)
-    disabled = [f for f in DISABLED if f in known] if known else list(DISABLED)
+    disabled = [f for f in DISABLED if (f in known or not known) and not (image_gen and f == "image_generation")]
     cmd = [codex, "exec", *(["resume"] if resume else []), "--json",
            "--skip-git-repo-check", "--ignore-user-config", "--ignore-rules",
            *[a for f in disabled for a in ("--disable", f)],
@@ -122,7 +122,8 @@ def last_rate_limits(thread):
     return None
 
 
-def run(cfg, prompt, model, schema=None, alive=lambda: True, images=(), resume=None, keep=False, role=None):
+def run(cfg, prompt, model, schema=None, alive=lambda: True, images=(), resume=None, keep=False, role=None,
+        image_gen=False):
     """-> (text, usage, thread, rate_limits). Raises ClientGone, CodexHung, UsageLimit,
     RuntimeError."""
     os.makedirs(WORKDIR, exist_ok=True)
@@ -142,7 +143,7 @@ def run(cfg, prompt, model, schema=None, alive=lambda: True, images=(), resume=N
             f.close()
             tmp.append(f.name)
             img_files.append(f.name)
-        cmd = build_cmd(cfg, model, schema_file, img_files, resume)
+        cmd = build_cmd(cfg, model, schema_file, img_files, resume, image_gen)
 
         sem = slots(cfg["max_codex"])
         while not sem.acquire(timeout=2):

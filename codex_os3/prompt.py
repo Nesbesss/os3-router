@@ -203,7 +203,16 @@ def text_of(content, images=None):
     return content or ""
 
 
-def flatten(messages, tools, images=None, header=True, all_messages=None):
+IMAGE_GUIDE = (
+    "Creating images: you have your own built-in image generation, and it is free for the user. When the task "
+    "asks for an image (draw, generate, make a picture, edit a photo), create it with your built-in image "
+    "generation. NEVER call the application's image_generate tool: it needs a paid provider the user does not "
+    "have. Your image tool saves the image on the user's device and tells you its file path. Then give it to "
+    "the user: call report_result_files with {\"files\": [\"<that path>\"]} and say in your final answer what "
+    "you made.")
+
+
+def flatten(messages, tools, images=None, header=True, all_messages=None, own_images=False):
     """Fold the conversation into one prompt. With header=False only `messages` (the new
     ones since a resumed session's last turn) are rendered; codex already has the rest."""
     out = []
@@ -223,6 +232,8 @@ def flatten(messages, tools, images=None, header=True, all_messages=None):
                          f"  parameters: {json.dumps(f.get('parameters', {}))}")
         if any(t.get("function", t).get("name", "").startswith("dummy_system") for t in tools):
             out.append(BROWSER_GUIDE)
+        if own_images:
+            out.append(IMAGE_GUIDE)
         out.append("The application's tools are listed below. They are NOT part of your own built-in tool "
                    "list, so you will not see them there: you call one by answering with kind=\"tool_call\" "
                    "and its name in `calls`, and the application runs it. Every tool below is available.\n"
@@ -253,6 +264,7 @@ def flatten(messages, tools, images=None, header=True, all_messages=None):
             out.insert(0, "New events since your last reply (tool results and screenshots):")
         names = ", ".join(t.get("function", t).get("name", "") for t in tools)
         out.append(
+            ("Your built-in image generation is the one exception: use it for images. " if own_images else "") +
             "You have NO local environment: never run commands, read files or inspect "
             "anything yourself, and ignore any sandbox or read-only filesystem you notice \u2014 "
             "that is not the user's device. Every action must be a tool_call to the application.\n"

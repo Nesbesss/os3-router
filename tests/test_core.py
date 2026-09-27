@@ -522,6 +522,26 @@ class UpdaterCertTest(unittest.TestCase):
             self.assertRaises(urllib.error.URLError, updater.latest)  # other errors are not retried
 
 
+class CodexImagesTest(unittest.TestCase):
+    """OS3's image_generate needs a paid provider: workers make images with Codex's own generator."""
+    def test_worker_with_image_generate_uses_codex_images(self):
+        from codex_os3 import codex_runner, config, engine
+        tools = TOOLS + [{"type": "function", "function": {"name": "image_generate", "parameters": {}}}]
+        body = {"model": "gpt-6-sol", "tools": tools,
+                "messages": [{"role": "system", "content": "You are a worker agent in OS3."}, {"role": "user", "content": "draw an apple"}]}
+        t = engine.Turn(dict(config.load(), engine="exec"), body, lambda: True)
+        self.assertTrue(t.own_images())
+        self.assertIn("built-in image generation", t.build(full=True)[1])
+        self.assertFalse(engine.Turn(dict(config.load(), codex_images=False), body, lambda: True).own_images())
+        self.assertFalse(engine.Turn(config.load(), dict(body, tools=TOOLS), lambda: True).own_images())
+        cmd = codex_runner.build_cmd({"effort": "low"}, "gpt-6-sol-low", image_gen=True)
+        self.assertNotIn("image_generation", cmd)
+        self.assertIn("image_generation", codex_runner.build_cmd({"effort": "low"}, "gpt-6-sol-low"))
+        bad = decision(("image_generate", {"prompt": "apple"}))
+        self.assertTrue(repair.decision_problems(bad, tools, SYSTEM, own_images=True))
+        self.assertFalse(repair.decision_problems(bad, tools, SYSTEM))  # Claude: OS3's tool is the only way
+
+
 class BrowserBehaviourTest(unittest.TestCase):
     def test_not_found_phrases(self):
         for s in ("I couldn't find Extreme weather on the page.", "The lesson is not listed.",

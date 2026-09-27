@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.9 (2026-09-27)
+- **Image generation with your ChatGPT subscription.** When you ask rabbit for an image, the worker now creates it
+  with Codex's own image generation (it counts toward your normal Codex limit) and hands the file to OS3, instead
+  of OS3 asking you to connect a paid image provider ("Generate images" card). Turn it off with `codex_images: false`.
+  With Claude as the model, OS3's own image tool is still used.
+
 ## 0.4.8 (2026-09-27)
 - **Computer use and browser tasks work again with OS3's newest version.** OS3 now checks whether the model can
   read images (it asks for four colour bands) before a worker may look at screenshots. The small background model

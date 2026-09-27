@@ -65,6 +65,13 @@ class Turn:
             store.event("os3_params", json.dumps({k: v if isinstance(v, (str, int, float, bool, dict)) and len(json.dumps(v)) < 200
                                                   else "…" for k, v in extra.items()})[:500])
 
+    tools = ()
+
+    def own_images(self):
+        """Codex makes the images itself when OS3 offers its (paid-provider) image_generate tool."""
+        return (self.backend == "codex" and self.cfg.get("codex_images", True)
+                and any(t.get("function", t).get("name") == "image_generate" for t in self.tools))
+
     def fallback_model(self, err=None):
         if err is not None and err.plan:
             return None
@@ -82,8 +89,8 @@ class Turn:
     def build(self, full, delta=None):
         src = self.msgs if full else delta
         imgs = P.Images(src, self.cfg["max_images"])
-        p = (P.flatten(self.msgs, self.tools, imgs) if full else
-             P.flatten(delta, self.tools, imgs, header=False, all_messages=self.msgs))
+        p = (P.flatten(self.msgs, self.tools, imgs, own_images=self.own_images()) if full else
+             P.flatten(delta, self.tools, imgs, header=False, all_messages=self.msgs, own_images=self.own_images()))
         if self.forced:
             p += P.FORCE_NUDGE.format(which="any tool" if self.forced == "*" else f"call `{self.forced}`")
         streak = P.observe_streak(self.msgs) if self.tools else 0
@@ -98,8 +105,9 @@ class Turn:
 
     def codex(self, prompt, images=(), resume=None, keep=False):
         runner = claude_runner if self.backend == "claude" else codex_runner
+        extra = {"image_gen": True} if self.own_images() else {}
         text, usage, thread, limits = runner.run(
-            self.cfg, prompt, self.model, self.schema, self.alive, images, resume, keep, role=self.role)
+            self.cfg, prompt, self.model, self.schema, self.alive, images, resume, keep, role=self.role, **extra)
         store.add_tokens(self.rid, usage)
         store.add_limits(limits, self.backend)
         return text, thread
@@ -209,7 +217,7 @@ class Turn:
             if r and (P.parse_decision(r) or {}).get("kind") == "tool_call":
                 raw, self.tid = r, t or self.tid
 
-        problems = repair.decision_problems(P.parse_decision(raw) or {}, tools, node_src)
+        problems = repair.decision_problems(P.parse_decision(raw) or {}, tools, node_src, self.own_images())
         for attempt in range(2):  # a broken call that reaches OS3 fails the step, so try twice
             if not problems:
                 break
@@ -218,7 +226,7 @@ class Turn:
             r, t = self.extra("fix", note.strip(), prompt + "\n\nYour reply was: " + raw[:4000] + note, images.files)
             if not r:
                 break
-            left = repair.decision_problems(P.parse_decision(r) or {}, tools, node_src)
+            left = repair.decision_problems(P.parse_decision(r) or {}, tools, node_src, self.own_images())
             self.ev("fix_result", f"{len(problems)} -> {len(left)} problem(s)")
             if len(left) < len(problems):
                 raw, self.tid, problems = r, t or self.tid, left
@@ -230,7 +238,7 @@ class Turn:
             r, t = self.extra("not_found", P.NOT_FOUND_NUDGE.strip(), prompt + "\n\nYour draft final answer was: " +
                               d.get("content", "")[:2000] + P.NOT_FOUND_NUDGE, images.files)
             d2 = (P.parse_decision(r) or {}) if r else {}
-            if d2.get("kind") in ("final", "tool_call") and not repair.decision_problems(d2, tools, node_src):
+            if d2.get("kind") in ("final", "tool_call") and not repair.decision_problems(d2, tools, node_src, self.own_images()):
                 self.ev("not_found_check", f"-> {d2.get('kind')}: {(d2.get('content') or str(d2.get('calls')))[:120]}")
                 raw, self.tid = r, t or self.tid
                 d = d2
@@ -239,7 +247,7 @@ class Turn:
             r, t = self.extra("verify", P.VERIFY_NUDGE.strip(), prompt + "\n\nYour draft final answer was: " +
                               d.get("content", "")[:2000] + P.VERIFY_NUDGE, images.files)
             d2 = (P.parse_decision(r) or {}) if r else {}
-            if d2.get("kind") in ("final", "tool_call") and not repair.decision_problems(d2, tools, node_src):
+            if d2.get("kind") in ("final", "tool_call") and not repair.decision_problems(d2, tools, node_src, self.own_images()):
                 self.ev("verify", f"-> {d2.get('kind')}: {(d2.get('content') or str(d2.get('calls')))[:120]}")
                 raw, self.tid = r, t or self.tid
         return raw

@@ -7,7 +7,7 @@ from .platform_util import pid_alive
 
 J = "application/json"
 EDITABLE = {"model", "effort", "bind", "port", "captures", "retention_days", "jev_key",
-            "webhook", "watchdog", "restart_agent", "auto_update", "fallback", "share_reports", "max_codex", "max_images", "role_routing", "roles"}
+            "webhook", "watchdog", "restart_agent", "auto_update", "fallback", "share_reports", "max_codex", "max_images", "role_routing", "roles", "codex_images"}
 
 
 def clean_roles(value):

@@ -151,7 +151,7 @@ def call_problems(name, args, tool):
     return probs
 
 
-def decision_problems(d, tools, node_src):
+def decision_problems(d, tools, node_src, own_images=False):
     if d.get("kind") != "tool_call":
         return []
     calls = [c for c in (d.get("calls") or ([d] if d.get("tool") else [])) if isinstance(c, dict)]
@@ -169,6 +169,9 @@ def decision_problems(d, tools, node_src):
         if isinstance(args, dict):  # judge the call as it will be sent, after the auto-fixes
             args = fix_computer_use(name, fix_node_id(args, tool, node_src))
         out += call_problems(name, args, tool)
+        if own_images and name == "image_generate":
+            out.append("image_generate: don't call it (it needs a paid image provider). Create the image with your "
+                       "own built-in image generation instead, then call report_result_files with its saved path")
     return out
 
 
