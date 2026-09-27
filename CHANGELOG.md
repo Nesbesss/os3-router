@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.7 (2026-09-27)
+- **Automatic updates work again on Macs and PCs where they failed with `CERTIFICATE_VERIFY_FAILED`.** Some Python
+  installs have no root certificates (the python.org Python on macOS until "Install Certificates" is run; on Windows,
+  Python only sees certificates Windows already downloaded). The router now uses macOS's own certificates when
+  Python has none, and downloads updates with the system's `curl` if Python's download still fails on a certificate.
+- **Stuck on an older version?** Update once by hand, after that it updates itself again. Mac: double-click
+  "Install Certificates.command" in Applications → Python 3.x, or rerun the install command. Windows: rerun
+  `irm https://raw.githubusercontent.com/Nesbesss/os3-router/main/install.ps1 | iex` in PowerShell.
+
 ## 0.4.6 (2026-09-27)
 - **Workers give up less on web pages:** when a page's text can't be read (Excel, Word or Google Docs online,
   apps that draw their content), workers now look at the screen and click through like a person, for

@@ -504,6 +504,21 @@ class MacAppUpdateTest(unittest.TestCase):
             os.environ["HOME"] = old_home
 
 
+class UpdaterCertTest(unittest.TestCase):
+    def test_falls_back_to_curl_on_certificate_errors(self):
+        import urllib.error
+        from codex_os3 import updater
+        bad = urllib.error.URLError("[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed")
+        done = mock.Mock(returncode=0, stdout=b'{"tag_name": "v9.9.9"}')
+        with mock.patch.object(updater.urllib.request, "urlopen", side_effect=bad), \
+                mock.patch.object(updater.shutil, "which", return_value="/usr/bin/curl"), \
+                mock.patch.object(updater.subprocess, "run", return_value=done) as run:
+            self.assertEqual(updater.latest(), "v9.9.9")
+        self.assertEqual(run.call_args[0][0][0], "/usr/bin/curl")
+        with mock.patch.object(updater.urllib.request, "urlopen", side_effect=urllib.error.URLError("timed out")):
+            self.assertRaises(urllib.error.URLError, updater.latest)  # other errors are not retried
+
+
 class BrowserBehaviourTest(unittest.TestCase):
     def test_not_found_phrases(self):
         for s in ("I couldn't find Extreme weather on the page.", "The lesson is not listed.",
