@@ -10,6 +10,9 @@ rabbit-agent, and automatic updates.
 
 **Highlights**
 - **Your subscription, not an API bill:** Codex (ChatGPT Plus/Pro) and Claude Code logins, per role
+- **Fast and light on your limits (0.5):** one Codex stays running (replies up to 3× faster) and your chat keeps
+  its conversation, so about 92% of it comes from the cache
+- **Two ChatGPT accounts (0.5):** when one runs out, the router continues on the next and comes back later
 - **Images included:** rabbit makes and edits pictures with Codex's own image generation, no paid image provider
 - **Browser and computer use that doesn't give up:** workers look at the screen when a page can't be read
   (Excel Online, Google Docs, canvas apps) and check again before saying something isn't there
@@ -98,8 +101,11 @@ Codex is an agent CLI, not a chat API, so the router does a lot of translation:
 - **Tool calling** via a strict output schema, with **several calls per turn** (OS3's computer-use
   skill requires "act → wait → screenshot → look" in one turn)
 - **Screenshots** go to the model as real images; the newest 2 are attached
-- **One Codex session per task** (`codex exec resume`): each turn sends only new events instead of re-reading
-  the whole conversation, and the model keeps its own reasoning
+- **One long-running Codex** (`codex app-server`, since 0.5): no process start per request, so replies come up to
+  3× faster. Windows uses one `codex exec` per request for now; set `engine` to `exec` or `appserver` to choose.
+- **One Codex conversation per task and per chat:** each turn sends only what's new instead of re-reading the
+  whole conversation, the model keeps its own reasoning, and almost everything is read from the cache. OS3's
+  changing "current time / state" note at the end of each chat request no longer forces a fresh start.
 - **Call repair and validation** before OS3 sees a call: broken JSON escapes, device names or garbled device ids
   instead of ids, dlam actions sent as script names, missing `feed_image` after a screenshot, and every
   argument checked against OS3's tool schemas and `act.py`'s own parser. Invalid calls go back to the model once
@@ -131,6 +137,21 @@ worker uses **Codex's built-in image generation** and hands the file to OS3, whi
 OS3 also checks whether the model can **see** images before a worker may use screenshots (it asks for the
 colours of four bands in a test picture, the *"Understand images"* card if it fails). The router answers that
 check with your worker model, so browser and computer use work without an extra provider.
+
+## Several ChatGPT accounts
+
+Open **Accounts** in the app and click **Add account**: you get a link and a short code, and you sign in there with
+the other ChatGPT account (on any device, e.g. your phone). The router then:
+- uses one account at a time and moves to the next when one is at **95%** or hits its limit
+- keeps a conversation on its account as long as it can (switching loses the cache once)
+- goes back to your main account as soon as it has room again
+- shows each account's 5-hour and weekly limits
+
+> ⚠️ Using more than one ChatGPT account this way may go against OpenAI's terms of use, and OpenAI could limit or
+> close the accounts involved. The app asks you to accept that risk before adding an account. You do this at your
+> own risk; the developer is not responsible for any limits, suspensions or bans.
+
+Each extra account has its own Codex folder (`~/.codex-os3/accounts/<n>`); **Remove** deletes it again.
 
 ## Updates
 
@@ -243,6 +264,7 @@ The router does not load your `~/.claude/settings.json`; it uses the login you m
 | OS3 shows a *"Generate images"* card asking for a provider | update to **0.4.9+**: images are made with your Codex subscription |
 | updates fail with `CERTIFICATE_VERIFY_FAILED` | Python without root certificates; update once by hand (see [Updates](#updates)), 0.4.7+ handles it |
 | a worker fails at the end with *"unhashable type: 'dict'"* | a bug in 0.4.10, fixed in **0.4.11** (updates itself) |
+| something behaves differently since 0.5 | set `engine` to `exec` in `~/.codex-os3/config.json` to use the 0.4 engine, then report it |
 | installer says *run this in Terminal on the Mac itself* | macOS services started over SSH lose their permissions; run it locally |
 | dashboard shows *Codex CLI version* ✗ | `npm i -g @openai/codex@latest` (older CLIs reject the current models) |
 | something else | open an issue with `os3-router doctor` output and a log export (dashboard → Tasks & export) |

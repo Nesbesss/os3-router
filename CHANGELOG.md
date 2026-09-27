@@ -1,15 +1,21 @@
 # Changelog
 
-## 0.5.0-prototype (2026-09-27)
-- **Prototype, being tested on the Mac mini.** Not released.
-- **Much less usage in chat:** the main chat keeps its Codex thread between messages instead of starting over,
-  so almost all of the conversation is reused from the cache (92% cached instead of 51% on real traffic).
-- **Faster:** one Codex process stays running instead of starting a new one for every request
-  (setting `engine: appserver`); chat replies and worker steps are about 1.5–2× faster.
-- **OS3's image check** (name four colour bands) now runs on the worker model, so OS3 stops asking for a paid
-  image provider.
-- **Browser workers** get the browser tool's step order spelled out (open, probe, connect, then page commands).
-- **Token counts** on the dashboard are per step again (continued steps were counted as running totals).
+## 0.5.0 (2026-09-28)
+The biggest update yet.
+- **Up to 3× faster:** one Codex now stays running instead of starting for every message. Follow-up replies take
+  about 2 seconds, browser steps are quicker too. (macOS and Linux; Windows keeps the old engine for now.
+  Setting: `engine`, `auto` by default.)
+- **Your limits last much longer:** your main chat keeps its conversation between messages instead of starting
+  over, so almost everything is reused from the cache (92% instead of about 50% on real use). Browser tasks
+  also read less per step.
+- **Two ChatGPT accounts (or more):** add another account under *Accounts* in the app (you sign in with a link
+  and a code). When one is almost out, the router moves on to the next by itself, and back when the first resets.
+  Using several accounts may go against OpenAI's terms: the app asks you to accept that risk first.
+- **Hangs are caught sooner:** a stalled model call is retried after a few minutes instead of blocking a task.
+- **When OS3 rejects a browser result** as unconfirmed, the worker takes a fresh look and reports again instead of
+  giving up.
+- **Token counts on the dashboard are correct** for tasks with several steps (they were shown as running totals).
+- A new *What's new* screen for this release 🎉
 
 ## 0.4.14 (2026-09-29)
 - **Keep OS3 running while the computer is idle.** Turn on Prevent idle sleep in the app's Settings, the Mac menu bar, or the Windows tray. It is off by default. The screen may still turn off; choosing Sleep or closing a laptop lid still pauses OS3.
