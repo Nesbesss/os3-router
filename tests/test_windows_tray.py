@@ -42,6 +42,12 @@ class TrayScript(unittest.TestCase):
         self.assertLess(trap, src.index("Add-Type"))
         self.assertLess(trap, src.index("New-Object System.Windows.Forms.NotifyIcon"))
 
+    def test_idle_sleep_toggle_sends_boolean_and_tracks_status(self):
+        src = read("app", "windows", "tray.ps1")
+        self.assertIn('$sleepItem = $menu.Items.Add("Prevent idle sleep")', src)
+        self.assertIn('Post "config" (@{ no_sleep = $desired } | ConvertTo-Json -Compress)', src)
+        self.assertIn('$sleepItem.Checked = [bool]$s.no_sleep', src)
+
 
 if __name__ == "__main__":
     unittest.main()

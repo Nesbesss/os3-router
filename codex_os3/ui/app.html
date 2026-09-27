@@ -426,13 +426,17 @@ VIEWS.settings = {static: true, async draw() {
   const sw = (k, t, d) => `<label class="sw"><input type="checkbox" data-k="${k}" ${CFG[k] ? "checked" : ""}><span><b>${t}</b><span class="muted">${d}</span></span></label>`;
   $("#view").innerHTML = `<h1>Settings</h1><p class="sub">Most people never need to change these.</p>
     <div class="card">${sw("auto_update", "Update automatically", "New versions are tested on this computer first and switched to without interrupting OS3.")}
+      ${CFG.sleep_supported ? sw("no_sleep", "Prevent idle sleep while OS3 runs", "Keeps this computer awake while the router is running. The screen may turn off; closing a laptop lid or choosing Sleep still pauses OS3.") : ""}
       ${sw("watchdog", "Watch over the OS3 node", "Restarts this computer's OS3 node when it gets stuck.")}
       ${sw("share_reports", "Share problem reports", "Anonymous notes to the developer when something breaks or gets fixed.")}</div>
     <div class="card" style="margin-top:16px"><h2>Connection details</h2>
       <div class="mrow"><span>Endpoint</span>${chip(`http://localhost:${CFG.port}/v1`)}</div><div class="mrow"><span>API key</span>${chip(CFG.api_key)}</div>
       <div class="row" style="margin-top:12px"><button class="btn" id="rot">New API key</button><span class="muted">Then delete and add the connection in OS3 again.</span></div></div>
     <p class="muted" style="margin-top:18px">OS3 Router ${esc(S.status?.version)} · <a class="link" href="/" target="_blank">Open the web dashboard</a></p>`;
-  document.querySelectorAll("[data-k]").forEach(i => i.onchange = async () => { await post("config", {[i.dataset.k]: i.checked}); toast("Saved"); });
+  document.querySelectorAll("[data-k]").forEach(i => i.onchange = async () => {
+    try { await post("config", {[i.dataset.k]: i.checked}); toast("Saved"); }
+    catch (err) { i.checked = !i.checked; toast("Could not save this setting"); }
+  });
   $("#rot").onclick = async () => { if (!confirm("Make a new API key? OS3 stops working until you add the connection again.")) return; await post("key/rotate"); toast("New key made"); render(true); };
 }};
 

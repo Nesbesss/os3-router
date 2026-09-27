@@ -12,8 +12,8 @@ function Port {  # config.json only holds changed settings: no "port" key means 
 }
 function Base { "http://127.0.0.1:$(Port)" }
 function Api($path) { Invoke-RestMethod "$(Base)/api/$path" -TimeoutSec 5 }
-function Post($path) {
-    Invoke-RestMethod "$(Base)/api/$path" -Method Post -Body "{}" -ContentType "application/json" `
+function Post($path, $body = "{}") {
+    Invoke-RestMethod "$(Base)/api/$path" -Method Post -Body $body -ContentType "application/json" `
         -Headers @{ "X-Codex-OS3" = "1" } -TimeoutSec 120
 }
 
@@ -36,6 +36,14 @@ $menu.Items.Add("Restart rabbit-agent", $null, {
     try { $r = Post "agent/restart"; $icon.ShowBalloonTip(3000, "os3-router", $r.message, "Info") } catch {}
 }) | Out-Null
 $menu.Items.Add("Reload router", $null, { try { Post "reload" | Out-Null } catch {} }) | Out-Null
+$sleepItem = $menu.Items.Add("Prevent idle sleep")
+$sleepItem.add_Click({
+    try {
+        $desired = -not $sleepItem.Checked
+        Post "config" (@{ no_sleep = $desired } | ConvertTo-Json -Compress) | Out-Null
+        $sleepItem.Checked = $desired
+    } catch { $icon.ShowBalloonTip(3000, "os3-router", "Could not change sleep setting", "Warning") }
+})
 $menu.Items.Add("-") | Out-Null
 $menu.Items.Add("Quit tray", $null, { $icon.Visible = $false; [System.Windows.Forms.Application]::Exit() }) | Out-Null
 $icon.ContextMenuStrip = $menu
@@ -63,6 +71,7 @@ function Update {
         $icon.Icon = if (-not $agentOk -or $errs.Count) { $red } elseif ($s.limits.s_pct -ge 90) { $amber } else { $green }
         $statusItem.Text = if ($agentOk) { "rabbit-agent connected · $($s.model)" } else { "rabbit-agent: $($s.agent.status)" }
         $limitItem.Text = "5h: $([math]::Round($s.limits.p_pct))%  ·  weekly: $([math]::Round($s.limits.s_pct))%"
+        $sleepItem.Checked = [bool]$s.no_sleep
         $icon.Text = "os3-router — $($statusItem.Text)".Substring(0, [Math]::Min(63, "os3-router — $($statusItem.Text)".Length))
         if ($s.whats_new -and -not $script:wnShown) { $script:wnShown = $true; OpenApp }  # the app shows what's new
         foreach ($a in @($s.alerts | Where-Object { $_.ts -gt $script:lastAlert })) {  # 90% limit, fallback switch

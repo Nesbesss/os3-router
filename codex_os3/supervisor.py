@@ -8,7 +8,7 @@ refused connection. Windows has no SO_REUSEPORT: there the old worker stops list
 first and the new one starts right after (a gap of about a second)."""
 import json, os, signal, socket, subprocess, sys, threading, time, urllib.request
 
-from . import config, engine, store
+from . import config, engine, sleep_control, store
 
 PIDFILE = os.path.join(config.HOME, "supervisor.pid")
 RELOAD_FILE = os.path.join(config.HOME, "reload.request")
@@ -57,8 +57,17 @@ def run():
     engine.log(f"supervisor {os.getpid()} started worker {worker.pid}")
     store.event("service_start", f"supervisor {os.getpid()}", source="supervisor")
     draining = []
+    sleep_guard = sleep_control.IdleSleepInhibitor()
+    sleep_error = None
     while not stop.is_set():
         stop.wait(1)
+        try:
+            sleep_guard.sync(bool(config.load()["no_sleep"]))
+            sleep_error = None
+        except OSError as exc:
+            if str(exc) != sleep_error:
+                store.event("sleep_prevention_failed", str(exc), source="supervisor", level="error")
+                sleep_error = str(exc)
         draining = [p for p in draining if p.poll() is None]
         if os.path.exists(RELOAD_FILE):
             os.unlink(RELOAD_FILE)
@@ -93,6 +102,10 @@ def run():
             p.wait(timeout=900)
         except subprocess.TimeoutExpired:
             p.kill()
+    try:
+        sleep_guard.close()
+    except OSError as exc:
+        store.event("sleep_prevention_failed", str(exc), source="supervisor", level="error")
     try:
         os.unlink(PIDFILE)
     except OSError:

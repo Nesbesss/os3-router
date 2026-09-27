@@ -1,13 +1,13 @@
 """JSON API behind the web UI. handle() -> (status, body, content_type)."""
-import json, os, re, shutil, subprocess, time
+import json, os, re, shutil, subprocess, sys, time
 
-from . import __version__, config, export, os3, roles, store
+from . import __version__, config, export, os3, roles, sleep_control, store
 from . import platform_util
 from .platform_util import pid_alive
 
 J = "application/json"
 EDITABLE = {"model", "effort", "bind", "port", "captures", "retention_days", "jev_key",
-            "webhook", "watchdog", "restart_agent", "auto_update", "fallback", "share_reports", "max_codex", "max_images", "role_routing", "roles", "codex_images"}
+            "webhook", "watchdog", "restart_agent", "auto_update", "no_sleep", "fallback", "share_reports", "max_codex", "max_images", "role_routing", "roles", "codex_images"}
 
 
 def clean_roles(value):
@@ -179,6 +179,7 @@ def handle(method, path, data, q, cfg):
                      "alerts": store.kv_get("alerts") or [],
                      "usage_limit": store.kv_get("usage_limit"), "agent": os3.status(),
                      "watchdog": wd, "running": running, "model": cfg["model"],
+                     "no_sleep": bool(cfg["no_sleep"]), "sleep_supported": sys.platform in sleep_control.SUPPORTED,
                      "endpoint": f"http://localhost:{cfg['port']}/v1"}, J
     if method == "GET" and path == "usage":
         return 200, usage(float(q.get("hours", 24))), J
@@ -231,10 +232,16 @@ def handle(method, path, data, q, cfg):
         return 200, doctor(cfg), J
     if method == "GET" and path == "config":
         c = dict(cfg)
+        c["sleep_supported"] = sys.platform in sleep_control.SUPPORTED
         c["jev_key"] = bool(c.get("jev_key"))  # never echo third-party secrets
         return 200, c, J  # api_key is shown: the UI is local-only or key-authenticated
     if method == "POST" and path == "config":
         upd = {k: v for k, v in data.items() if k in EDITABLE}
+        if "no_sleep" in upd:
+            if type(upd["no_sleep"]) is not bool:
+                return 400, {"error": "no_sleep must be true or false"}, J
+            if upd["no_sleep"] and sys.platform not in sleep_control.SUPPORTED:
+                return 400, {"error": "idle sleep prevention is not supported on this platform"}, J
         if "roles" in upd:
             upd["roles"] = dict(cfg.get("roles") or {}, **clean_roles(upd["roles"]))
         if "fallback" in upd:  # empty model = no fallback for that role
