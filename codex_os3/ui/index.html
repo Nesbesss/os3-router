@@ -257,6 +257,12 @@ details summary { cursor: pointer; color: var(--ink-2); font-size: 12px; margin-
     <form id="cfg"></form>
     <div class="row"><button class="btn primary" id="save">Save</button><span class="muted" id="savemsg"></span></div>
   </div>
+  <div class="card" style="max-width:640px;margin-top:14px">
+    <h2>Router updates</h2>
+    <p class="muted">Check now or install a newer release even when automatic updating is off or its last attempt failed. The release must pass its tests before the router switches over.</p>
+    <div class="row"><button class="btn" id="upcheck">Find new updates</button><button class="btn primary" id="upinstall" hidden>Install update now</button></div>
+    <p class="muted" id="upmsg" role="status">Reading update status…</p>
+  </div>
 </section>
 </main>
 <div class="toast" id="toast"></div>
@@ -544,6 +550,28 @@ const FIELDS = [
   ["bind", "Listen on", "select", ["127.0.0.1","0.0.0.0"], "0.0.0.0 exposes the router on your network (API key still required). Needs a service restart.", "Network"],
 ];
 let MODELS = [];
+const updateError = (e) => { try { return JSON.parse(e.message).error || e.message; } catch (_) { return e.message; } };
+let UPDATE_BUSY = false;
+async function refreshUpdates() {
+  if (UPDATE_BUSY) return;
+  try {
+    const u = await api("updates"), m = u.manual || {};
+    const active = ["queued", "installing", "switching"].includes(m.state);
+    $("#upinstall").hidden = !u.managed || !u.available;
+    $("#upinstall").disabled = !u.available || active;
+    $("#upinstall").textContent = m.state === "failed" && m.tag === u.latest ? "Retry update now" : "Install update now";
+    $("#upcheck").disabled = !u.managed;
+    $("#upmsg").textContent = !u.managed ? "Manual updates are available for installer-made installs. Update this checkout with git."
+      : m.state === "failed" && m.tag === u.latest ? `Update to ${m.tag} failed: ${m.error}`
+      : m.state === "queued" ? `Update to ${m.tag} requested. Waiting for the updater.`
+      : m.state === "installing" ? `Installing ${m.tag} and running its tests…`
+      : m.state === "switching" ? `Installed ${m.tag} on disk. Waiting for the running router to switch versions.`
+      : m.state === "installed" && !u.available ? `OS3 Router ${u.current} is running.`
+      : u.available ? `${u.latest} is available. Running ${u.current}.`
+      : u.latest ? `Running ${u.current}; latest known release is ${u.latest}.`
+      : `Running ${u.current}. Choose Find new updates to check GitHub.`;
+  } catch (e) { $("#upmsg").textContent = updateError(e); }
+}
 async function settings() {
   const c = await api("config");
   MODELS = await api("models");
@@ -564,6 +592,7 @@ async function settings() {
     $(`[data-desc="${r}"]`).textContent = m.description;
   };
   ["chat", "worker", "background"].forEach(r => { sync(r); $(`select[data-role="${r}"][data-k="model"]`).onchange = () => sync(r); });
+  await refreshUpdates();
   $("#cfg").innerHTML = FIELDS.map(([k, label, type, opts, help, grp]) => (grp ? `<div class="cfggroup">${grp}</div>` : "") + (() => {
     const h = help ? `<span class="muted">${help}</span>` : "";
     if (type === "bool") return `<label class="check"><input type="checkbox" name="${k}" ${c[k] ? "checked" : ""} ${c[k] == null ? "data-unasked=1" : ""}> ${label}</label>${help ? `<p class="muted" style="margin:-6px 0 12px 26px">${help}</p>` : ""}`;
@@ -591,6 +620,16 @@ $("#save").onclick = async () => {
   const r = await post("config", out);
   $("#savemsg").textContent = r.restart_needed ? "Saved — restart the service for the listen setting." : "Saved.";
   toast("Settings saved");
+};
+$("#upcheck").onclick = async () => {
+  UPDATE_BUSY = true; $("#upcheck").disabled = true; $("#upmsg").textContent = "Checking GitHub for updates…";
+  try { await post("updates"); UPDATE_BUSY = false; await refreshUpdates(); }
+  catch (e) { UPDATE_BUSY = false; $("#upmsg").textContent = updateError(e); $("#upcheck").disabled = false; }
+};
+$("#upinstall").onclick = async () => {
+  UPDATE_BUSY = true; $("#upinstall").disabled = true;
+  try { await post("updates/install"); UPDATE_BUSY = false; await refreshUpdates(); }
+  catch (e) { UPDATE_BUSY = false; $("#upmsg").textContent = updateError(e); $("#upinstall").disabled = false; }
 };
 $("#rotate").onclick = async () => { if (!confirm("Rotate the API key? OS3 stops working until you re-register the connection with the new key.")) return; await post("key/rotate"); toast("New key created"); refresh(); };
 const restartAgent = async () => { if (!confirm("Restart the rabbit-agent (OS3 node) on this machine?")) return; toast("Restarting rabbit-agent…"); try { const r = await post("agent/restart"); toast(r.message); } finally { refresh(); } };
@@ -620,7 +659,7 @@ async function refresh() {
   } catch (e) { $("#health").textContent = "✗ " + e.message; }
 }
 refresh();
-setInterval(() => { const tab = document.querySelector('nav button[aria-selected="true"]').dataset.tab; if (tab !== "settings") refresh(); }, 10000);
+setInterval(() => { const tab = document.querySelector('nav button[aria-selected="true"]').dataset.tab; if (tab === "settings") refreshUpdates(); else refresh(); }, 10000);
 
 // what's new after an update: shown once (the menu bar app / tray may show it instead)
 function mdItems(body) {

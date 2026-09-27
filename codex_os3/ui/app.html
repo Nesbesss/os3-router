@@ -604,11 +604,36 @@ VIEWS.help = {static: true, async draw(first) {
 }};
 
 // ---------------------------------------------------------------- settings
+const updateError = (e) => { try { return JSON.parse(e.message).error || e.message; } catch (_) { return e.message; } };
+let UPDATE_BUSY = false;
+async function refreshUpdates() {
+  if (!$("#upmsg") || UPDATE_BUSY) return;
+  try {
+    const u = await api("updates"), m = u.manual || {};
+    const active = ["queued", "installing", "switching"].includes(m.state);
+    $("#upinstall").hidden = !u.managed || !u.available;
+    $("#upinstall").disabled = !u.available || active;
+    $("#upinstall").textContent = m.state === "failed" && m.tag === u.latest ? "Retry update now" : "Install update now";
+    $("#upcheck").disabled = !u.managed;
+    $("#upmsg").textContent = !u.managed ? "Manual updates are available for installer-made installs. Update this checkout with git."
+      : m.state === "failed" && m.tag === u.latest ? `Update to ${m.tag} failed: ${m.error}`
+      : m.state === "queued" ? `Update to ${m.tag} requested. Waiting for the updater.`
+      : m.state === "installing" ? `Installing ${m.tag} and running its tests…`
+      : m.state === "switching" ? `Installed ${m.tag} on disk. Waiting for the running router to switch versions.`
+      : m.state === "installed" && !u.available ? `OS3 Router ${u.current} is running.`
+      : u.available ? `${u.latest} is available. Running ${u.current}.`
+      : u.latest ? `Running ${u.current}; latest known release is ${u.latest}.`
+      : `Running ${u.current}. Choose Find new updates to check GitHub.`;
+  } catch (e) { $("#upmsg").textContent = updateError(e); }
+}
 VIEWS.settings = {static: true, async draw() {
   CFG = await api("config");
   const sw = (k, t, d) => `<label class="sw"><input type="checkbox" data-k="${k}" ${CFG[k] ? "checked" : ""}><span><b>${t}</b><span class="muted">${d}</span></span></label>`;
   $("#view").innerHTML = `<h1>Settings</h1><p class="sub">Most people never need to change these.</p>
     <div class="card">${sw("auto_update", "Update automatically", "New versions are tested on this computer first and switched to without interrupting OS3.")}
+      <div style="padding:16px 0;border-bottom:1px solid var(--line)"><b>Router updates</b><p class="muted">Check now or install a newer release even when automatic updating is off or its last attempt failed. The release must pass its tests before the router switches over.</p>
+        <div class="row"><button class="btn" id="upcheck">Find new updates</button><button class="btn primary" id="upinstall" hidden>Install update now</button></div>
+        <p class="muted" id="upmsg" role="status">Reading update status…</p></div>
       ${CFG.sleep_supported ? sw("no_sleep", "Prevent idle sleep while OS3 runs", "Keeps this computer awake while the router is running. The screen may turn off; closing a laptop lid or choosing Sleep still pauses OS3.") : ""}
       ${sw("watchdog", "Watch over the OS3 node", "Restarts this computer's OS3 node when it gets stuck.")}
       ${sw("share_reports", "Share problem reports", "Anonymous notes to the developer when something breaks or gets fixed.")}</div>
@@ -616,12 +641,25 @@ VIEWS.settings = {static: true, async draw() {
       <div class="mrow"><span>Endpoint</span>${chip(`http://localhost:${CFG.port}/v1`)}</div><div class="mrow"><span>API key</span>${chip(CFG.api_key)}</div>
       <div class="row" style="margin-top:12px"><button class="btn" id="rot">New API key</button><span class="muted">Then delete and add the connection in OS3 again.</span></div></div>
     <p class="muted" style="margin-top:18px">OS3 Router ${esc(S.status?.version)} · <a class="link" href="/" target="_blank">Open the web dashboard</a></p>`;
+  await refreshUpdates();
+  $("#upcheck").onclick = async () => {
+    UPDATE_BUSY = true; $("#upcheck").disabled = true; $("#upmsg").textContent = "Checking GitHub for updates…";
+    try { await post("updates"); UPDATE_BUSY = false; await refreshUpdates(); }
+    catch (e) { UPDATE_BUSY = false; $("#upmsg").textContent = updateError(e); $("#upcheck").disabled = false; }
+  };
+  $("#upinstall").onclick = async () => {
+    UPDATE_BUSY = true; $("#upinstall").disabled = true;
+    try { await post("updates/install"); UPDATE_BUSY = false; await refreshUpdates(); }
+    catch (e) { UPDATE_BUSY = false; $("#upmsg").textContent = updateError(e); $("#upinstall").disabled = false; }
+  };
   document.querySelectorAll("[data-k]").forEach(i => i.onchange = async () => {
     try { await post("config", {[i.dataset.k]: i.checked}); toast("Saved"); }
     catch (err) { i.checked = !i.checked; toast("Could not save this setting"); }
   });
   $("#rot").onclick = async () => { if (!confirm("Make a new API key? OS3 stops working until you add the connection again.")) return; await post("key/rotate"); toast("New key made"); render(true); };
 }};
+
+setInterval(() => { if (VIEW === "settings") refreshUpdates(); }, 10000);
 
 // ---------------------------------------------------------------- shared clicks
 document.addEventListener("click", async (e) => {

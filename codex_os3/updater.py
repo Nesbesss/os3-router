@@ -44,6 +44,45 @@ def managed():
     return os.path.normcase(os.path.realpath(APP)) == os.path.normcase(os.path.realpath(os.path.join(config.HOME, "app")))
 
 
+def manual_state():
+    """A requested update is installed only when this running version confirms it."""
+    state = store.kv_get("manual_update") or {}
+    if state.get("tag") and ver(__version__) >= ver(state["tag"]):
+        return {"state": "installed", "tag": state["tag"]}
+    return state
+
+
+def update_status(cfg):
+    tag = store.kv_get("update_latest")
+    return {"managed": managed(), "current": __version__, "latest": tag,
+            "available": bool(tag and ver(tag) > ver(__version__)),
+            "automatic": bool(cfg.get("auto_update", True)), "manual": manual_state()}
+
+
+def check_now(cfg):
+    """Check GitHub now without changing the automatic check interval."""
+    if not managed():
+        raise ValueError("Updates in Settings require an installer-made installation. Update this checkout with git.")
+    tag = latest()
+    store.kv_set("update_latest", tag)
+    return update_status(cfg)
+
+
+def request_update(cfg):
+    """Queue the last discovered newer release for the watchdog, even if auto updates are off."""
+    if not managed():
+        raise ValueError("Updates in Settings require an installer-made installation.")
+    tag = store.kv_get("update_latest")
+    if not tag or ver(tag) <= ver(__version__):
+        raise ValueError("No newer release is known. Choose Find new updates first.")
+    state = manual_state().get("state")
+    if state in ("queued", "installing", "switching"):
+        raise ValueError("An update is already in progress.")
+    store.kv_set("manual_update", {"state": "queued", "tag": tag})
+    store.event("update", f"manual update to {tag} requested", source="ui")
+    return update_status(cfg)
+
+
 def install(tag, app=APP, run_tests=True):
     tmp = tempfile.mkdtemp(prefix="os3-router-update-")
     try:
@@ -135,7 +174,28 @@ StartupWMClass=os3-router
 
 def maybe(cfg):
     """Called from the watchdog loop (one owner at a time)."""
-    if not cfg.get("auto_update", True) or not managed():
+    if not managed():
+        return
+    manual = store.kv_get("manual_update") or {}
+    if manual.get("state") == "queued":
+        tag = manual["tag"]
+        if ver(tag) <= ver(__version__):
+            store.kv_set("manual_update", {"state": "installed", "tag": tag})
+            return
+        store.kv_set("manual_update", {"state": "installing", "tag": tag})
+        store.kv_set("update_checked", time.time())  # avoid a second automatic install while switching
+        try:
+            store.event("update", f"manually installing {tag}", source="updater")
+            install(tag)
+            store.kv_set("manual_update", {"state": "switching", "tag": tag})
+            store.event("update", f"{tag} installed on disk, switching over", source="updater")
+        except Exception as e:
+            store.kv_set("manual_update", {"state": "failed", "tag": tag,
+                                           "error": f"{type(e).__name__}: {e}"[:300]})
+            store.event("update_failed", f"manual {tag}: {type(e).__name__}: {e}"[:300],
+                        source="updater", level="warn")
+        return
+    if not cfg.get("auto_update", True):
         return
     if store.kv_get("codex_outdated"):  # Codex refused a model as too old: update it right away
         from . import selffix
