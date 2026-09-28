@@ -163,6 +163,16 @@ class Service(unittest.TestCase):
             with sqlite3.connect(os.path.join(self.home, "state.db")) as db:
                 db.execute("DELETE FROM kv WHERE k LIKE 'no_model:%'")
 
+    def test_signed_out_login_gets_a_clear_answer(self):
+        try:
+            d = self.post({"messages": [{"role": "user", "content": "FAKE_SIGNEDOUT hi"}]})["choices"][0]["message"]
+            self.assertIn("signed out", d["content"])
+            main = next(a for a in self.get("/api/accounts")["accounts"] if a["id"] == "main")
+            self.assertTrue(main["signed_out"])
+        finally:
+            with sqlite3.connect(os.path.join(self.home, "state.db")) as db:
+                db.execute("DELETE FROM kv WHERE k LIKE 'signed_out:%' OR k LIKE 'limited:%'")
+
     def test_browser_worker_does_not_give_up_on_visible_things(self):
         browse = {"type": "function", "function": {"name": "dummy_system", "description": "drive the browser",
                                                    "parameters": {"type": "object", "properties": {}}}}
