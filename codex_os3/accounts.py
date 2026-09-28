@@ -110,12 +110,27 @@ def usable(acct):
     return not limited(acct) and not nearly_out(acct) and not signed_out(acct)
 
 
-def pick(prefer=None):
+def offers(acct, slug):
+    """Does this account's plan include the model? None = its model list isn't known yet."""
+    from . import roles
+    ms = roles.account_models(home(acct))
+    return None if ms is None else any(m["slug"] == slug for m in ms)
+
+
+def pick(prefer=None, model=None):
     """The account for a request. `prefer` = the account that holds this conversation's thread: kept
-    while it can still be used (switching loses the cache once). None = every account is out."""
+    while it can still be used (switching loses the cache once). None = every account is out.
+    `model`: an account whose plan has it goes first (Free has fewer models than Plus); if none that can
+    be used has it, the usual order applies and the plan-swap picks a model the account does have."""
     accts = all_accounts()
-    if prefer in accts and usable(prefer):
+
+    def fits(a):
+        return model is None or offers(a, model) is not False
+    if prefer in accts and usable(prefer) and fits(prefer):
         return prefer
+    for a in accts:
+        if usable(a) and fits(a):
+            return a
     for a in accts:
         if usable(a):
             return a
@@ -123,6 +138,37 @@ def pick(prefer=None):
         if not limited(a) and not signed_out(a):
             return a
     return None
+
+
+def fetch_models(srv, acct):
+    """Ask this account's Codex for its models and keep the answer next to its login (for an account whose
+    Codex hasn't run yet, so has no cache of its own)."""
+    ms = [{"slug": m["model"], "name": m.get("displayName") or m["model"], "description": m.get("description") or "",
+           "efforts": [e.get("reasoningEffort") for e in m.get("supportedReasoningEfforts") or [] if e.get("reasoningEffort")] or ["medium"],
+           "default_effort": m.get("defaultReasoningEffort") or "medium", "backend": "codex"}
+          for m in srv.request("model/list", {}, 60).get("data") or [] if m.get("model") and not m.get("hidden")]
+    if ms:
+        os.makedirs(home(acct), exist_ok=True)
+        with open(os.path.join(home(acct), "os3-models.json"), "w") as f:
+            json.dump({"models": ms, "ts": time.time()}, f)
+    return ms
+
+
+def ensure_models(cfg):
+    """Every account needs a model list, or the selector can't show what its plan adds. Accounts without one
+    are asked once (again after 10 minutes if that failed)."""
+    from . import appserver, roles
+    for a in all_accounts():
+        if roles.account_models(home(a)) is not None:
+            continue
+        k = "models_try:" + a
+        if (store.kv_get(k) or 0) > time.time() - 600:
+            continue
+        store.kv_set(k, time.time())
+        try:
+            fetch_models(appserver.server(cfg, a), a)
+        except Exception as e:
+            store.event("models_list", f"account {a}: could not ask Codex for its models: {e}"[:200], level="warn", source="accounts")
 
 
 def owner(thread):
@@ -226,6 +272,10 @@ def _finish(cfg, srv, st):
             with open(os.path.join(home(st["id"]), "os3-account.json"), "w") as f:
                 json.dump(dict(info(st["id"]), **who, added=info(st["id"]).get("added") or time.time()), f)
         note_plan(st["id"], who["plan"])
+        try:
+            fetch_models(srv, st["id"])  # the plan decides which models this account can offer
+        except Exception:
+            pass  # (asked again from the model list)
         st.update(status="done", email=who["email"], plan=who["plan"])
         if st["again"]:
             _restart(st["id"])  # its running Codex still holds the old, dead login

@@ -266,6 +266,7 @@ def handle(method, path, data, q, cfg):
         store.kv_set("whatsnew_seen", __version__)
         return 200, {"ok": True}, J
     if method == "GET" and path == "models":
+        accounts.ensure_models(cfg)  # an account that hasn't run yet has no list of its own
         return 200, roles.available_models(), J
     if method == "GET" and path == "doctor":
         return 200, doctor(cfg), J

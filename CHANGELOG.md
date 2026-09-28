@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.11 (2026-09-28)
+- **Security: a website can no longer read your router's key or change its settings.** A web page could make your browser talk to the router as if it were on your own computer (DNS rebinding) and read the API key from the dashboard. The router now only answers the dashboard to requests addressed to `localhost`, `127.0.0.1` or `::1`. Nothing changes for the app or for OS3. If you use the dashboard from another computer, that still works with your key as before. **Please update.**
+- **The installer puts the latest release on your computer, not the newest unfinished code.** New installs (macOS, Windows, Linux) now get the same tested version updates give you.
+- **Installing again over a running router can't leave you without one.** The installer keeps the previous version until the new one answers, and puts it back if the new one doesn't start. On Windows it also no longer tries to delete the folder the running router is using.
+- **The installer checks the port by trying it.** Other programs, and ports Windows keeps for itself, no longer stop the router from starting: it takes the next free port.
+- **After installing, the installer asks the running router what it sees**, not its own window: is Codex found and signed in, is Claude Code available, and (when you're watching) a real test request. If something is wrong it says what, instead of "installed".
+- **Windows: a failed install no longer closes the window with the message in it,** any error (not only the ones the installer expected) gets the friendly explanation, and if Windows won't let you create the scheduled task (some company PCs), the router starts from your Windows startup list instead.
+- **macOS: the installer prefers Homebrew's or the system's Python** over whatever `python3` your shell has (conda, pyenv), which the background service depends on for good.
+- **Several ChatGPT accounts: the model list now shows every account's models.** With a Free account and a Plus account, the list used to show only the first account's models, so what Plus adds (like the bigger models) never appeared. It now shows all of them, marks the ones only some accounts have (for example "GPT-6-Sol (account 2 only)"), and sends a request to an account whose plan includes the model, instead of giving the Free account a model it refuses and switching to a smaller one. An account that hasn't handled a request yet is asked for its models once.
+- **Failed installs write what a person helping needs** (versions, where Python, Codex and Claude were found, the router's own checks, the end of its log) to `install.log`. Nothing is sent anywhere.
+
 ## 0.5.10 (2026-09-28)
 - **Claude Code signed out is now said plainly.** Before, a Claude Code that was signed out (or whose login had expired) gave a raw error, or the wrong message about Codex. The router now tells you to run `claude`, then `/login`, and a fallback model takes over meanwhile if you set one.
 - **A Claude model that can't run no longer breaks a role.** If a role (or its fallback) uses a Claude model but Claude Code isn't installed or can't be found, the router uses your default ChatGPT model instead of failing every request.

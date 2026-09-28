@@ -674,7 +674,12 @@ class AccountsTest(unittest.TestCase):
 
     def tearDown(self):
         self.env.stop()
-        store._w("DELETE FROM kv WHERE k LIKE 'signed_out:%' OR k LIKE 'plan:%' OR k = 'account_order'")
+        for f in ("models_cache.json", "os3-models.json"):  # (account 2's folder outlives the test)
+            try:
+                os.unlink(os.path.join(self.a.root(), "2", f))
+            except OSError:
+                pass
+        store._w("DELETE FROM kv WHERE k LIKE 'signed_out:%' OR k LIKE 'plan:%' OR k LIKE 'models_try:%' OR k = 'account_order'")
 
     def test_account_used_first(self):
         a, now = self.a, time.time()
@@ -771,6 +776,55 @@ class AccountsTest(unittest.TestCase):
         self.assertEqual(msg["content"], "hi")
         self.assertEqual([a for a, m in seen], ["main", "2", "2"])
         self.assertTrue(seen[-1][1].startswith("gpt-6-luna"))
+
+    def _models(self, home, *slugs):
+        os.makedirs(home, exist_ok=True)
+        with open(os.path.join(home, "models_cache.json"), "w") as f:
+            json.dump({"models": [{"slug": m, "display_name": m.upper(), "visibility": "list",
+                                   "supported_reasoning_levels": [{"effort": "low"}, {"effort": "medium"}]} for m in slugs]}, f)
+
+    def test_selector_lists_the_models_of_every_account(self):
+        """Main is a Free plan, account 2 a Plus one: the selector must offer what Plus adds, and say where."""
+        from codex_os3 import roles
+        self._models(self.home, "gpt-6-luna")
+        self._models(os.path.join(self.a.root(), "2"), "gpt-6-luna", "gpt-6-sol")
+        got = {m["slug"]: m for m in roles.available_models() if m["backend"] == "codex"}
+        self.assertEqual(sorted(got), ["gpt-6-luna", "gpt-6-sol"])
+        self.assertEqual(got["gpt-6-sol"]["only"], ["2"])
+        self.assertNotIn("only", got["gpt-6-luna"])
+        self.assertEqual([m["slug"] for m in roles.available_models(self.home) if m["backend"] == "codex"], ["gpt-6-luna"])
+
+    def test_request_goes_to_the_account_whose_plan_has_the_model(self):
+        from codex_os3 import codex_runner, engine
+        self._models(self.home, "gpt-6-luna")
+        self._models(os.path.join(self.a.root(), "2"), "gpt-6-luna", "gpt-6-sol")
+        seen = []
+
+        def run(cfg, prompt, model, *a, account=None, **k):
+            seen.append((account, model))
+            return "hi", {}, "T1", None
+        cfg = dict(self.cfg.load(), engine="exec", role_routing=False)
+        with mock.patch.object(codex_runner, "run", side_effect=run):
+            for model in ("gpt-6-sol", "gpt-6-luna"):
+                body = {"model": model, "messages": [{"role": "user", "content": "q"}]}
+                engine.Turn(cfg, body, lambda: True).run()
+        self.assertEqual([a for a, _ in seen], ["2", "main"])  # sol only exists on 2; luna stays on the first account
+
+    def test_account_without_a_list_is_asked_once(self):
+        from codex_os3 import roles
+        self._models(self.home, "gpt-6-luna")
+        srv = mock.Mock()
+        srv.request.return_value = {"data": [
+            {"model": "gpt-6-sol", "displayName": "GPT-6-Sol", "hidden": False, "defaultReasoningEffort": "medium",
+             "supportedReasoningEfforts": [{"reasoningEffort": "low"}, {"reasoningEffort": "medium"}]},
+            {"model": "gpt-hidden", "hidden": True}]}
+        store._w("DELETE FROM kv WHERE k LIKE 'models_try:%'")
+        with mock.patch("codex_os3.appserver.server", return_value=srv) as make:
+            self.a.ensure_models({})
+            self.a.ensure_models({})
+        self.assertEqual(make.call_count, 1)   # account 2 only; main has its cache, and the second call finds a list
+        self.assertEqual([m["slug"] for m in roles.account_models(self.a.home("2"))], ["gpt-6-sol"])
+
 
 
 class UnconfirmedResultTest(unittest.TestCase):
@@ -933,6 +987,7 @@ class SecondRouterTest(unittest.TestCase):
 
 
 class ClaudeFoundTest(unittest.TestCase):
+    @unittest.skipIf(sys.platform == "win32", "Windows has no login shell to ask")
     def test_found_by_login_shell(self):
         """An nvm/alias install is only known to the user's shell: ask it when the usual folders miss."""
         from codex_os3 import roles

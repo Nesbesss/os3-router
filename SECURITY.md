@@ -15,9 +15,11 @@
 - Codex session files in `~/.codex/sessions` for running tasks, deleted 3 h after a task goes idle
 
 ## Dashboard
-- Allowed from the machine itself; remotely only after `/login?key=<api key>` (HttpOnly, SameSite=Strict
-  cookie) or with `Authorization: Bearer`. State-changing API calls also need an `X-Codex-OS3` header, which
-  cross-site pages can't send.
+- Allowed from the machine itself, and only when the request names this machine (`Host` is `localhost`, `127.x`
+  or `::1`): a web page whose own name was re-pointed at 127.0.0.1 (DNS rebinding) also arrives from the machine
+  itself, but with its own name, and is refused. Remotely only after `/login?key=<api key>` (HttpOnly,
+  SameSite=Strict cookie) or with `Authorization: Bearer`. State-changing API calls also need an `X-Codex-OS3`
+  header, which ordinary cross-site pages can't send.
 - Exports are redacted (API keys, bearer tokens, password-like fields, images), but review them before sharing.
 
 ## Reporting

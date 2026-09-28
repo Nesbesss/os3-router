@@ -218,7 +218,7 @@ class Turn:
         while True:
             if not isinstance(err, SignedOut):  # (a signed-out one is already marked by the runner)
                 accounts.mark_limited(self.account)
-            nxt = accounts.pick()
+            nxt = accounts.pick(model=roles.codex_split(self.model)[0])
             if not nxt or nxt == self.account:
                 return None
             why = "is signed out" if isinstance(err, SignedOut) else "reached its usage limit"
@@ -289,9 +289,10 @@ class Turn:
             images, prompt = self.build(full=True)
         if self.backend == "codex":  # which account: the thread's own while it has room
             holder = accounts.owner(thread) if thread else None
-            self.account = accounts.pick(prefer=holder) or accounts.MAIN
+            self.account = accounts.pick(prefer=holder, model=roles.codex_split(self.model)[0]) or accounts.MAIN
             if thread and holder and holder != self.account:
-                self.ev("account_switch", f"account {holder} is nearly out: continuing on account {self.account} (fresh)")
+                self.ev("account_switch", f"account {holder} can't take this request now (nearly out, or its plan lacks the model): "
+                        f"continuing on account {self.account} (fresh)")
                 thread = None
                 images, prompt = self.build(full=True)
             sub = self.plan_model()  # a model this account's plan refused earlier

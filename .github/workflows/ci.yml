@@ -26,7 +26,13 @@ jobs:
           CODEX_OS3_SRC=$PWD bash install.sh --no-wait
           cd ~/.codex-os3/app && python3 -m codex_os3 status | grep "service: running"
           python3 -m codex_os3 reload
-          cd - && bash install.sh --uninstall --purge
+          python3 -m codex_os3 verify || true   # what the running service sees (Codex, sign-in, Claude)
+          # installing again over the running router (an upgrade) keeps it running and leaves no rollback copy behind
+          cd "$GITHUB_WORKSPACE"   # (the installer replaces the app folder: don't stand in it)
+          CODEX_OS3_SRC="$GITHUB_WORKSPACE" bash install.sh --no-wait
+          cd ~/.codex-os3/app && python3 -m codex_os3 status | grep "service: running"
+          test ! -d ~/.codex-os3/app.old
+          cd "$GITHUB_WORKSPACE" && bash install.sh --uninstall --purge
   powershell:
     runs-on: windows-latest
     steps:
@@ -79,9 +85,35 @@ jobs:
             try { $after = (Invoke-RestMethod "http://127.0.0.1:$($cfg.port)/health" -TimeoutSec 2).pid } catch {}
           }
           if ($after -eq $before) { Get-Content "$env:USERPROFILE/.codex-os3/service.log"; throw "reload did not swap the worker" }
+          # installing again over the running router (an upgrade): the new files go over the old folder, which the
+          # running router holds as its working directory; nothing nested, no rollback copy left, still answering
+          ./install.ps1 -NoTray -NoWait
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { throw "upgrade failed" }
+          $appdir = "$env:USERPROFILE/.codex-os3/app"
+          if (Test-Path "$appdir/app.new") { throw "upgrade nested the new version inside the old folder" }
+          if (-not (Test-Path "$appdir/codex_os3/__init__.py")) { throw "upgrade left no router" }
+          if (Test-Path "$appdir.old") { throw "rollback copy was not cleaned up" }
+          Invoke-RestMethod "http://127.0.0.1:$($cfg.port)/health" -TimeoutSec 5 | Out-Null
+          Push-Location $appdir; python -m codex_os3 verify; Pop-Location
           ./install.ps1 -Uninstall -Purge
           Start-Sleep 3
           try { Invoke-RestMethod "http://127.0.0.1:$($cfg.port)/health" -TimeoutSec 2; throw "still running after uninstall" } catch { if ($_.Exception.Message -like "*still running*") { throw } }
+  macos-installer:
+    # install.sh's launchd branch (what most Mac users run) had no test at all: the Linux job covers cron only
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          sudo install -m 755 tests/fake_codex/codex.py /usr/local/bin/codex
+          CODEX_OS3_SRC=$PWD bash install.sh --no-wait --no-app
+          launchctl print "gui/$(id -u)/ai.codexos3.router" | head -12
+          cd ~/.codex-os3/app && python3 -m codex_os3 status | grep "service: running"
+          python3 -m codex_os3 verify || true
+          cd "$GITHUB_WORKSPACE"   # (the installer replaces the app folder: don't stand in it)
+          CODEX_OS3_SRC="$GITHUB_WORKSPACE" bash install.sh --no-wait --no-app
+          cd ~/.codex-os3/app && python3 -m codex_os3 status | grep "service: running"
+          test ! -d ~/.codex-os3/app.old
+          cd "$GITHUB_WORKSPACE" && bash install.sh --uninstall --purge
   macos-app:
     runs-on: macos-latest
     steps:

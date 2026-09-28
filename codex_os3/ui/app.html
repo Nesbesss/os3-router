@@ -457,7 +457,7 @@ VIEWS.home = {async draw() {
 // ---------------------------------------------------------------- models
 VIEWS.models = {static: true, async draw() {
   [CFG, MODELS] = await Promise.all([api("config"), api("models")]);
-  const opts = (sel, none) => (none ? `<option value="">${none}</option>` : "") + ["codex", "claude"].map(b => { const ms = MODELS.filter(m => (m.backend || "codex") === b); return ms.length ? `<optgroup label="${b === "claude" ? "Claude (Claude Code)" : "ChatGPT (Codex)"}">${ms.map(m => `<option value="${esc(m.slug)}" ${m.slug === sel ? "selected" : ""}>${esc(m.name)}</option>`).join("")}</optgroup>` : ""; }).join("");
+  const opts = (sel, none) => (none ? `<option value="">${none}</option>` : "") + ["codex", "claude"].map(b => { const ms = MODELS.filter(m => (m.backend || "codex") === b); return ms.length ? `<optgroup label="${b === "claude" ? "Claude (Claude Code)" : "ChatGPT (Codex)"}">${ms.map(m => `<option value="${esc(m.slug)}" ${m.slug === sel ? "selected" : ""}>${esc(m.name)}${m.only ? " (" + m.only.map(a => a === "main" ? "main account" : "account " + a).join(", ") + " only)" : ""}</option>`).join("")}</optgroup>` : ""; }).join("");
   const on = CFG.role_routing !== false;
   $("#view").innerHTML = `<h1>Models</h1><p class="sub">Choose which model does what. Changes are saved right away.</p>
     <div class="card"><label class="sw"><input type="checkbox" id="routing" ${on ? "checked" : ""}><span><b>A different model for each role</b><span class="muted">Off: one model (${esc(CFG.model)}) does everything.</span></span></label></div>
