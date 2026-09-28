@@ -1071,6 +1071,29 @@ class SecondRouterTest(unittest.TestCase):
 
 class ClaudeFoundTest(unittest.TestCase):
     @unittest.skipIf(sys.platform == "win32", "Windows has no login shell to ask")
+    def test_found_inside_the_desktop_app_or_editor_extension(self):
+        """No `claude` command anywhere (only the Claude desktop app / VS Code extension): its bundled copy is used,
+        the newest one, and a real install in the usual folders still wins."""
+        from codex_os3 import roles
+        with tempfile.TemporaryDirectory() as home:
+            def make(*parts):
+                f = os.path.join(home, *parts)
+                os.makedirs(os.path.dirname(f), exist_ok=True)
+                open(f, "w").close()
+                return f
+            app = make("Library", "Application Support", "Claude", "claude-code", "2.1.281", "claude.app", "Contents", "MacOS", "claude")
+            with mock.patch.dict(os.environ, {"HOME": home, "USERPROFILE": home, "PATH": ""}), \
+                    mock.patch.object(roles, "CLAUDE_DIRS", ()), mock.patch.object(roles, "_from_login_shell", return_value=None):
+                self.assertEqual(roles.claude_path({}), app)
+                ext = make(".vscode", "extensions", "anthropic.claude-code-2.1.282-darwin-arm64", "resources", "native-binary", "claude")
+                os.utime(ext, (time.time() + 60, time.time() + 60))
+                self.assertEqual(roles.claude_path({}), ext)                       # the newer copy
+                self.assertEqual(roles.claude_path({"claude_bin": os.path.join(home, "gone")}), ext)  # stale saved path
+            real = make(".local", "bin", "claude")
+            with mock.patch.dict(os.environ, {"HOME": home, "USERPROFILE": home, "PATH": ""}), \
+                    mock.patch.object(roles, "CLAUDE_DIRS", ("~/.local/bin",)):
+                self.assertEqual(roles.claude_path({}), real)
+
     def test_found_by_login_shell(self):
         """An nvm/alias install is only known to the user's shell: ask it when the usual folders miss."""
         from codex_os3 import roles

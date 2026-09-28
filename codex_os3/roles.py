@@ -5,7 +5,7 @@ OS3 in "local" mode sends the same model id for everything, but the requests dif
   worker      background workers doing the job: "You are a worker agent", shell, computer_use, files
   background  small housekeeping calls: memory/fact extraction, reply review, titles (few or no tools)
 """
-import json, os, re, shutil, subprocess, sys, time
+import glob, json, os, re, shutil, subprocess, sys, time
 
 ROLES = ("chat", "worker", "background")
 LABEL = {"chat": "Small (main chat)", "worker": "Standard (workers)", "background": "Background"}
@@ -175,6 +175,20 @@ CLAUDE_DIRS = ("~/.local/bin", "~/.claude/local", "/opt/homebrew/bin", "/usr/loc
                "~/.bun/bin", "~/AppData/Roaming/npm", "~/AppData/Local/Programs/claude")
 
 
+# Claude Code also travels inside other programs, with no `claude` command on PATH: the Claude desktop app
+# (its Code tab) and the editor extension. Same program, same login; the newest copy wins.
+CLAUDE_BUNDLED = ("~/Library/Application Support/Claude/claude-code/*/claude.app/Contents/MacOS/claude",
+                  "~/.vscode/extensions/anthropic.claude-code-*/resources/native-binary/claude*",
+                  "~/.vscode-insiders/extensions/anthropic.claude-code-*/resources/native-binary/claude*",
+                  "~/.cursor/extensions/anthropic.claude-code-*/resources/native-binary/claude*",
+                  "~/.windsurf/extensions/anthropic.claude-code-*/resources/native-binary/claude*")
+
+
+def _bundled_claude():
+    hits = [f for pat in CLAUDE_BUNDLED for f in glob.glob(os.path.expanduser(pat)) if os.path.isfile(f)]
+    return max(hits, key=os.path.getmtime) if hits else None
+
+
 _shell = [0, None]  # [when asked, answer]
 
 
@@ -214,7 +228,7 @@ def claude_path(cfg=None):
             f = os.path.normpath(os.path.join(os.path.expanduser(d), name))
             if os.path.isfile(f):
                 return f
-    p = _from_login_shell()
+    p = _bundled_claude() or _from_login_shell()
     if p:
         return p
     return cfg.get("claude_bin") or None  # set but missing right now (e.g. a drive not mounted): keep it
