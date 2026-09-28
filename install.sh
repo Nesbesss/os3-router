@@ -24,11 +24,11 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-b() { printf '\033[1m%s\033[0m\n' "$*"; }
+b() { STEP="$*"; printf '\033[1m%s\033[0m\n' "$*"; }
 ok() { printf '  \033[32m✓\033[0m %s\n' "$*"; }
 warn() { printf '  \033[33m!\033[0m %s\n' "$*"; }
 die() { printf '  \033[31m✗\033[0m %s\n' "$*"; exit 1; }
-tty_in() { if [ -r /dev/tty ]; then "$@" </dev/tty; else "$@"; fi; }
+tty_in() { if ( : </dev/tty ) 2>/dev/null; then "$@" </dev/tty; else "$@"; fi; }
 
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 UNIT="$HOME/.config/systemd/user/codex-os3.service"
@@ -60,8 +60,26 @@ if [ "$UNINSTALL" = 1 ]; then
   ok "done"; exit 0
 fi
 
+# everything below also goes to install.log; any failure ends with what to do next
+mkdir -p "$HOME_DIR"; LOG="$HOME_DIR/install.log"
+TTY_OUT=0; [ -t 1 ] && TTY_OUT=1  # (checked before stdout becomes the pipe to tee)
+exec > >(tee "$LOG") 2>&1
+STEP="starting"; FAILED_CMD=""
+trap 'FAILED_CMD=$BASH_COMMAND' ERR
+on_exit() {
+  code=$?
+  [ "$code" = 0 ] && return
+  printf '\n  \033[31mThe install stopped\033[0m during: %s\n' "$STEP"
+  [ -n "$FAILED_CMD" ] && printf '  failed command: %s\n' "$FAILED_CMD"
+  printf '  • Running the same install command again is safe: it continues where it can.\n'
+  printf '  • Still stuck? Share %s in the os3-router Discord, or open an issue:\n' "$LOG"
+  printf '    https://github.com/%s/issues/new\n' "$REPO"
+}
+trap on_exit EXIT
+
 b "os3-router installer"
 case "$OS" in Darwin|Linux) ;; *) die "use install.ps1 on Windows" ;; esac
+command -v curl >/dev/null 2>&1 || die "curl is missing (Linux: sudo apt install curl)"
 
 # launchd services started from an SSH session land outside the GUI session: they can't be
 # bootstrapped, and processes they start lose macOS permissions (Accessibility etc.)
@@ -70,44 +88,63 @@ if [ "$OS" = Darwin ] && [ -n "${SSH_CONNECTION:-}" ]; then
 fi
 
 # --------------------------------------------------------------------------- python
+py_ok() { "$1" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)' >/dev/null 2>&1; }
+UV="$HOME_DIR/bin/uv"
+uv_py() { UV_PYTHON_INSTALL_DIR="$HOME_DIR/python" "$UV" "$@"; }
 PY=""
-for c in python3 /usr/bin/python3; do
-  if command -v "$c" >/dev/null 2>&1 && "$c" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)' 2>/dev/null; then
-    PY="$(command -v "$c")"; break
-  fi
+for c in python3 /opt/homebrew/bin/python3 /usr/local/bin/python3 /usr/bin/python3; do
+  p="$(command -v "$c" 2>/dev/null)" || continue
+  # macOS without the developer tools: /usr/bin/python3 is a stub that pops up an install dialog
+  [ "$OS" = Darwin ] && [ "$p" = /usr/bin/python3 ] && ! xcode-select -p >/dev/null 2>&1 && continue
+  py_ok "$p" && { PY="$p"; break; }
 done
-if [ -z "$PY" ]; then
-  [ "$OS" = Darwin ] && die "Python 3.9+ not found. Run: xcode-select --install   (then re-run this installer)"
-  die "Python 3.9+ not found. Install it (e.g. sudo apt install python3) and re-run."
+[ -z "$PY" ] && [ -x "$UV" ] && PY="$(uv_py python find --managed-python 3.12 2>/dev/null || true)"
+if [ -z "$PY" ]; then  # no Python 3.9+: a private one for the router (nothing else on the system changes)
+  b "Getting Python for the router (no Python 3.9+ on this machine)"
+  curl -fsSL --retry 3 https://astral.sh/uv/install.sh | env UV_INSTALL_DIR="$HOME_DIR/bin" UV_NO_MODIFY_PATH=1 sh >/dev/null \
+    || die "could not download uv (the Python installer): check the internet connection and re-run"
+  uv_py python install 3.12 >/dev/null 2>&1 || die "could not install Python 3.12 with uv: check the internet connection and re-run"
+  PY="$(uv_py python find --managed-python 3.12)"
 fi
+py_ok "$PY" || die "Python at $PY doesn't work"
 ok "python: $PY ($("$PY" -c 'import platform; print(platform.python_version())'))"
 
 # --------------------------------------------------------------------------- codex cli
 if [ "$NODE_ONLY" = 0 ]; then
-if ! command -v codex >/dev/null 2>&1; then
-  b "Installing the Codex CLI"
-  if command -v npm >/dev/null 2>&1; then npm install -g @openai/codex >/dev/null
-  elif command -v brew >/dev/null 2>&1; then brew install codex >/dev/null
-  else die "install Node.js (https://nodejs.org) or Homebrew first, then re-run — the Codex CLI needs one of them"; fi
-fi
-CODEX="$(command -v codex)" || die "codex not on PATH after install"
 MIN_CODEX="0.155.0"
 codex_ver() { "$CODEX" --version 2>/dev/null | awk '{print $NF}' | cut -d- -f1; }
 ver_lt() { [ "$(printf '%s\n%s\n' "$1" "$2" | sort -t. -k1,1n -k2,2n -k3,3n | head -1)" = "$1" ] && [ "$1" != "$2" ]; }
-if ver_lt "$(codex_ver)" "$MIN_CODEX"; then
+# OpenAI's own standalone installer: no Node.js or Homebrew needed, installs to ~/.local/bin
+codex_official() {
+  curl -fsSL --retry 3 https://github.com/openai/codex/releases/latest/download/install.sh \
+    | CODEX_NON_INTERACTIVE=1 CODEX_INSTALL_DIR="$HOME/.local/bin" sh >/dev/null \
+    || die "could not install the Codex CLI: check the internet connection and re-run"
+  CODEX="$HOME/.local/bin/codex"
+}
+CODEX="$(command -v codex 2>/dev/null || true)"
+[ -z "$CODEX" ] && [ -x "$HOME/.local/bin/codex" ] && CODEX="$HOME/.local/bin/codex"  # installed, not on PATH yet
+if [ -z "$CODEX" ]; then
+  b "Installing the Codex CLI"
+  codex_official
+elif ver_lt "$(codex_ver)" "$MIN_CODEX"; then
   b "Updating the Codex CLI ($(codex_ver) is too old for the current models)"
   NPM="$(dirname "$CODEX")/npm"; [ -x "$NPM" ] || NPM="$(command -v npm || true)"
-  if [ -n "$NPM" ] && "$NPM" install -g @openai/codex@latest >/dev/null 2>&1; then :
-  elif command -v brew >/dev/null 2>&1 && brew upgrade codex >/dev/null 2>&1; then :
-  else warn "could not update codex automatically: run  npm i -g @openai/codex@latest"; fi
-  hash -r; CODEX="$(command -v codex)"
+  if [ -n "$NPM" ] && "$NPM" install -g @openai/codex@latest >/dev/null 2>&1; then hash -r; CODEX="$(command -v codex)"
+  elif command -v brew >/dev/null 2>&1 && brew upgrade codex >/dev/null 2>&1; then hash -r; CODEX="$(command -v codex)"; fi
+  ver_lt "$(codex_ver)" "$MIN_CODEX" && codex_official  # e.g. npm without write access: the standalone one
 fi
+[ -x "$CODEX" ] && "$CODEX" --version >/dev/null 2>&1 || die "the Codex CLI at $CODEX doesn't start"
 ok "codex: $CODEX ($(codex_ver))"
 if ! "$CODEX" login status >/dev/null 2>&1; then
-  b "Log in to Codex with your ChatGPT account"
-  tty_in "$CODEX" login || die "codex login failed"
+  b "Sign in to Codex with your ChatGPT account"
+  if [ -n "${SSH_CONNECTION:-}" ] || { [ "$OS" = Linux ] && [ -z "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; }; then
+    tty_in "$CODEX" login --device-auth || true  # no browser here: a link + code to open on any device
+  else
+    tty_in "$CODEX" login || true
+  fi
+  "$CODEX" login status >/dev/null 2>&1 || die "Codex isn't signed in (the sign-in was cancelled or timed out): re-run to try again"
 fi
-ok "codex is logged in"
+ok "codex is signed in"
 
 fi
 
@@ -127,7 +164,7 @@ if [ -n "${CODEX_OS3_SRC:-}" ]; then
   (cd "$CODEX_OS3_SRC" && tar --exclude .git --exclude app/macos/.build --exclude _proto -cf - .) | (cd "$NEW" && tar xf -)
 else
   TGZ="$HOME_DIR/src.tgz"
-  if curl -fsSL "https://codeload.github.com/$REPO/tar.gz/$REF" -o "$TGZ" 2>/dev/null; then :
+  if curl -fsSL --retry 3 "https://codeload.github.com/$REPO/tar.gz/$REF" -o "$TGZ" 2>/dev/null; then :
   elif command -v gh >/dev/null 2>&1 && gh api "repos/$REPO/tarball/$REF" > "$TGZ" 2>/dev/null; then :  # private repo
   else die "could not download $REPO@$REF"; fi
   tar xzf "$TGZ" -C "$NEW" --strip-components 1 && rm -f "$TGZ"
@@ -264,7 +301,8 @@ for i in $(seq 1 30); do
   sleep 1
 done || true
 "$PY" -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:$PORT/health', timeout=2)" 2>/dev/null \
-  && ok "router answering on http://127.0.0.1:$PORT" || die "router did not start — see $HOME_DIR/service.log"
+  && ok "router answering on http://127.0.0.1:$PORT" \
+  || { tail -n 25 "$HOME_DIR/service.log" 2>/dev/null | sed 's/^/    /'; die "router did not start (the lines above are the end of $HOME_DIR/service.log)"; }
 
 # --------------------------------------------------------------------------- macOS app
 if [ "$OS" = Darwin ] && [ "$NO_APP" = 0 ]; then
@@ -310,7 +348,7 @@ DESKTOP
 elif [ "$NO_APP" = 1 ]; then open "http://localhost:$PORT/app#setup" 2>/dev/null || true
 fi  # macOS: the app installed above opens on the setup wizard by itself
 
-if [ "$NO_WAIT" = 0 ] && [ -t 1 ]; then
+if [ "$NO_WAIT" = 0 ] && [ "$TTY_OUT" = 1 ]; then
   b "Waiting for OS3 to connect… (save the connection in OS3 and send it a message; Ctrl-C to skip)"
   if "$PY" -m codex_os3 wait-for-os3 1800 >/dev/null; then ok "OS3 is connected — you're done 🎉"
   else warn "no request from OS3 yet; the dashboard shows when it connects"; fi

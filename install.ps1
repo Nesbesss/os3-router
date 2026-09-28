@@ -14,7 +14,26 @@ $TrayTask = "codex-os3 tray"
 
 function Ok($m) { Write-Host "  [ok] $m" -ForegroundColor Green }
 function Warn($m) { Write-Host "  [!]  $m" -ForegroundColor Yellow }
-function Die($m) { Write-Host "  [x]  $m" -ForegroundColor Red; exit 1 }
+$Step = "starting"
+function Step($m) { $script:Step = $m; Write-Host $m -ForegroundColor White }
+function Die($m) {
+    Write-Host "  [x]  $m" -ForegroundColor Red
+    Write-Host ""
+    Write-Host "  The install stopped during: $script:Step" -ForegroundColor Red
+    Write-Host "  - Running the same install command again is safe: it continues where it can."
+    Write-Host "  - Still stuck? Share $HomeDir\install.log in the os3-router Discord, or open an issue:"
+    Write-Host "    https://github.com/$Repo/issues/new"
+    try { Stop-Transcript | Out-Null } catch {}
+    exit 1
+}
+# Runs a downloaded installer script in its own PowerShell, so its "exit" can't end this one
+function Run-Installer($url, $name) {
+    $f = Join-Path $env:TEMP "os3-$name.ps1"
+    try { Invoke-WebRequest $url -OutFile $f -UseBasicParsing } catch { return $false }
+    $prev = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+    try { & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $f *> $null; return $LASTEXITCODE -eq 0 }
+    finally { $ErrorActionPreference = $prev; Remove-Item $f -ErrorAction SilentlyContinue }
+}
 
 if ($Uninstall) {
     foreach ($t in $TaskName, $TrayTask) { schtasks /End /TN $t 2>$null | Out-Null; schtasks /Delete /TN $t /F 2>$null | Out-Null }
@@ -26,6 +45,9 @@ if ($Uninstall) {
     Ok "uninstalled"; exit 0
 }
 
+New-Item -ItemType Directory -Force -Path $HomeDir | Out-Null
+try { Start-Transcript -Path (Join-Path $HomeDir "install.log") -Force | Out-Null } catch {}
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12  # PowerShell 5.1
 Write-Host "os3-router installer (Windows, beta)" -ForegroundColor White
 
 # --- python --------------------------------------------------------------------------
@@ -39,21 +61,37 @@ foreach ($c in "python", "python3", "py") {
     catch { continue }
     if ($out.Count -ge 2 -and [int]$out[0] -ge 309) { $Py = $out[1].Trim(); break }
 }
-if (-not $Py) { Die "Python 3.9+ not found. Install it from https://www.python.org/downloads/ (tick 'Add to PATH'), then re-run." }
+$Uv = Join-Path $HomeDir "bin\uv.exe"
+$env:UV_PYTHON_INSTALL_DIR = Join-Path $HomeDir "python"
+if (-not $Py -and -not (Test-Path $Uv)) {  # no Python 3.9+: a private one for the router (nothing else changes)
+    Step "Getting Python for the router (no Python 3.9+ on this machine)"
+    $env:UV_INSTALL_DIR = Join-Path $HomeDir "bin"; $env:UV_NO_MODIFY_PATH = "1"
+    if (-not (Run-Installer "https://astral.sh/uv/install.ps1" "uv")) { Die "could not download uv (the Python installer): check the internet connection and re-run" }
+}
+if (-not $Py -and (Test-Path $Uv)) {
+    $prevEap = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+    try { & $Uv python install 3.12 *> $null; $Py = (& $Uv python find --managed-python 3.12 2>$null | Select-Object -First 1) } finally { $ErrorActionPreference = $prevEap }
+}
+if (-not $Py) { Die "could not get Python 3.12: check the internet connection and re-run (or install Python from https://www.python.org/downloads/ with 'Add to PATH' ticked)" }
 $PyW = Join-Path (Split-Path $Py) "pythonw.exe"
 if (-not (Test-Path $PyW)) { $PyW = $Py }
 Ok "python: $Py"
 
 # --- codex cli -------------------------------------------------------------------------
-if (-not (Get-Command codex -ErrorAction SilentlyContinue)) {
-    if (-not (Get-Command npm -ErrorAction SilentlyContinue)) { Die "install Node.js (https://nodejs.org) first — the Codex CLI needs it" }
-    Write-Host "Installing the Codex CLI"
-    npm install -g @openai/codex | Out-Null
-}
 # -CommandType Application: codex.cmd/.exe, not the codex.ps1 shim (Windows can't start a .ps1
 # directly: "[WinError 193] not a valid Win32 application"); the router then picks npm's codex.exe
 $Codex = (Get-Command codex -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1).Source
-if (-not $Codex) { Die "codex not on PATH after install (open a new terminal and re-run)" }
+$Standalone = Join-Path $env:LOCALAPPDATA "Programs\OpenAI\Codex\bin\codex.exe"
+if (-not $Codex -and (Test-Path $Standalone)) { $Codex = $Standalone }  # installed, not on PATH in this window yet
+if (-not $Codex) {
+    # OpenAI's own standalone installer: no Node.js needed
+    Step "Installing the Codex CLI"
+    $env:CODEX_NON_INTERACTIVE = "1"
+    if (-not (Run-Installer "https://github.com/openai/codex/releases/latest/download/install.ps1" "codex") -or -not (Test-Path $Standalone)) {
+        Die "could not install the Codex CLI: check the internet connection and re-run"
+    }
+    $Codex = $Standalone
+}
 Ok "codex: $Codex"
 # Windows PowerShell 5.1 turns any native stderr output into a terminating NativeCommandError while
 # $ErrorActionPreference is "Stop", even when the command exits 0 ("Logged in using ChatGPT" goes to
@@ -61,8 +99,16 @@ Ok "codex: $Codex"
 $prevEap = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
 try { & $Codex login status *> $null; $loginStatus = $LASTEXITCODE } finally { $ErrorActionPreference = $prevEap }
-if ($loginStatus -ne 0) { Write-Host "Log in to Codex with your ChatGPT account"; & $Codex login; if ($LASTEXITCODE -ne 0) { Die "codex login failed" } }
-Ok "codex is logged in"
+if ($loginStatus -ne 0) {
+    Step "Sign in to Codex with your ChatGPT account"
+    $ErrorActionPreference = "Continue"
+    try {
+        if ($env:SSH_CONNECTION) { & $Codex login --device-auth } else { & $Codex login }  # over SSH: a link + code instead of a browser
+        & $Codex login status *> $null; $loginStatus = $LASTEXITCODE
+    } finally { $ErrorActionPreference = $prevEap }
+    if ($loginStatus -ne 0) { Die "Codex isn't signed in (the sign-in was cancelled or timed out): re-run to try again" }
+}
+Ok "codex is signed in"
 
 # --- rabbit-agent ----------------------------------------------------------------------
 if (Test-Path (Join-Path $env:USERPROFILE ".rabbit-agent")) { Ok "rabbit-agent found on this machine" }
@@ -120,7 +166,10 @@ $up = $false
 for ($i = 0; $i -lt 30 -and -not $up; $i++) {
     try { Invoke-RestMethod "http://127.0.0.1:$Port/health" -TimeoutSec 2 | Out-Null; $up = $true } catch { Start-Sleep 1 }
 }
-if (-not $up) { Die "router did not start — see $HomeDir\service.log" }
+if (-not $up) {
+    Get-Content (Join-Path $HomeDir "service.log") -Tail 25 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "    $_" }
+    Die "router did not start (the lines above are the end of $HomeDir\service.log)"
+}
 Ok "router answering on http://127.0.0.1:$Port"
 
 # --- tray app --------------------------------------------------------------------------
@@ -143,9 +192,10 @@ try { & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $AppD
 catch { Warn "could not create the Start menu entry: $_" }
 
 & $Py -m codex_os3 setup-info
-if ($NoWait) { Pop-Location; exit 0 }
+if ($NoWait) { Pop-Location; try { Stop-Transcript | Out-Null } catch {}; exit 0 }
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $OpenApp -Page setup
 Write-Host "Waiting for OS3 to connect… (save the connection in OS3 and send it a message; Ctrl-C to skip)"
 & $Py -m codex_os3 wait-for-os3 1800 | Out-Null
 if ($LASTEXITCODE -eq 0) { Ok "OS3 is connected — you're done" } else { Warn "no request from OS3 yet; the dashboard shows when it connects" }
 Pop-Location
+try { Stop-Transcript | Out-Null } catch {}
