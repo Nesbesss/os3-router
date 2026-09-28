@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.5.1 (unreleased)
+## 0.5.1 (2026-09-28)
 - **Update checks keep working when GitHub's API rate limit is reached.** The router uses GitHub's public latest-release link to find the newest version, so automatic and manual update checks can continue without waiting for the API quota to reset. The fallback also works when Python cannot verify website certificates and must use the system's curl tool.
 
 ## 0.5.0 (2026-09-28)
