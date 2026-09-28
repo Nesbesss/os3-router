@@ -1,14 +1,19 @@
 """Runs the official Claude Code CLI (`claude -p`, unmodified, signed in by the user with their
 own account) as a decision backend, the same way codex_runner runs `codex exec`. Same
 signature and return value as codex_runner.run."""
-import base64, json, os, time
+import base64, json, os, re, time
 
 from . import platform_util
-from .codex_runner import WORKDIR, ClientGone, UsageLimit, _supervise, idle_limit, slots, split_model
+from .codex_runner import WORKDIR, ClientGone, SignedOut, UsageLimit, _supervise, idle_limit, slots, split_model
 
 SYSTEM = ("You are the decision engine of an app. The app runs the tools listed in the prompt and "
           "sends you their results. Answer only through the structured output.")
 MEDIA = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "webp": "image/webp", "gif": "image/gif"}
+# "Not logged in · Please run /login", "Invalid API key · Please run /login", an expired OAuth token
+AUTH_RE = re.compile(r"not logged in|run /login|invalid api key|oauth token .{0,40}expired|authentication_error", re.I)
+# Claude Code too old for the model, or no access to it: "There's an issue with the selected model (…). It may
+# not exist or you may not have access to it."
+MODEL_RE = re.compile(r"issue with the selected model|may not have access", re.I)
 EFFORTS = {"minimal": "low", "ultra": "max"}  # codex effort names without a Claude equivalent
 
 
@@ -105,8 +110,10 @@ def run(cfg, prompt, model, schema=None, alive=lambda: True, images=(), resume=N
         return (json.dumps(so) if so is not None else result.get("result") or ""), usage, thread, rl
     msg = ((result or {}).get("result") or " | ".join(map(str, (result or {}).get("errors") or []))
            or ("\n".join(err) or "no output from claude")[-600:])
-    if "usage credits" in msg.lower() or "not available" in msg.lower() and "model" in msg.lower():
+    if "usage credits" in msg.lower() or "not available" in msg.lower() and "model" in msg.lower() or MODEL_RE.search(msg):
         raise UsageLimit(msg, plan=True)  # e.g. Fable on Pro: "requires usage credits"
+    if AUTH_RE.search(msg):
+        raise SignedOut(msg)
     if info.get("status") == "rejected" or "limit" in msg.lower() and ("usage" in msg.lower() or "reset" in msg.lower()):
         reset = info.get("resetsAt")
         raise UsageLimit(msg, time.strftime("%H:%M", time.localtime(reset)) if reset else "")

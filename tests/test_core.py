@@ -308,6 +308,48 @@ class ClaudeBackendTest(unittest.TestCase):
         self.assertIsNone(C.limits({}))
 
 
+    def test_claude_errors_are_told_apart(self):
+        from codex_os3 import claude_runner as C
+        from codex_os3.codex_runner import SignedOut, UsageLimit
+        for msg, exc, plan in (("Not logged in · Please run /login", SignedOut, False),
+                               ("There's an issue with the selected model (claude-x). It may not exist or you may not have access to it.",
+                                UsageLimit, True)):
+            line = json.dumps({"type": "result", "is_error": True, "result": msg})
+            with mock.patch.object(C, "_supervise", return_value=([line], [], "t")):
+                with self.assertRaises(exc) as cm:
+                    C.run({"effort": "medium", "max_codex": 3, "hang_idle_s": 90}, "hi", "claude-sonnet-5-5-low")
+            self.assertEqual(cm.exception.plan, plan)
+
+    def test_claude_model_without_claude_code_uses_codex(self):
+        from codex_os3 import roles
+        cfg = {"role_routing": True, "model": "gpt-6-luna", "effort": "medium",
+               "roles": {"chat": {"model": "claude-sonnet-5-5", "effort": "medium"}},
+               "fallback": {"chat": {"model": "claude-haiku-4-5", "effort": "low"}}}
+        with mock.patch.object(roles, "claude_installed", return_value=False):
+            self.assertEqual(roles.pick(cfg, "chat", "gpt-6-luna"), "gpt-6-luna-medium")
+            self.assertIsNone(roles.pick_fallback(cfg, "chat"))
+            self.assertEqual(roles.pick(dict(cfg, role_routing=False, model="claude-opus-5-5"), "chat", None), "gpt-6-luna")
+        with mock.patch.object(roles, "claude_installed", return_value=True):
+            self.assertEqual(roles.pick(cfg, "chat", "gpt-6-luna"), "claude-sonnet-5-5-medium")
+
+    def test_a_codex_thread_is_not_resumed_by_claude(self):
+        from codex_os3 import claude_runner, config, engine, roles, sessions
+        cfg = dict(config.load(), roles={"chat": {"model": "claude-sonnet-5-5", "effort": "low"}})
+        body = {"model": "x", "messages": [{"role": "system", "content": "s"}, {"role": "user", "content": "q"}],
+                "tools": [{"type": "function", "function": {"name": "create_task", "parameters": {}}}]}
+        seen = []
+
+        def run(cfg, prompt, model, schema, alive, images, resume, keep, **k):
+            seen.append(resume)
+            return '{"kind":"final","calls":[],"content":"hi"}', {}, "S1", None
+        with mock.patch.object(roles, "claude_installed", return_value=True), \
+                mock.patch.object(sessions, "plan", return_value=(True, "CODEX-THREAD", body["messages"][1:])), \
+                mock.patch.object(engine.accounts, "owner", return_value="main"), \
+                mock.patch.object(claude_runner, "run", side_effect=run):
+            msg, _ = engine.Turn(cfg, body, lambda: True).run()
+        self.assertEqual((seen, msg["content"]), ([None], "hi"))
+
+
 class UpdaterTest(unittest.TestCase):
     def test_install_from_release_archive(self):
         import io, tarfile
@@ -705,6 +747,30 @@ class AccountsTest(unittest.TestCase):
         with mock.patch.object(codex_runner, "run", side_effect=run):
             msg, _ = engine.Turn(cfg, body, lambda: True).run()
         self.assertEqual((seen, msg["content"]), (["main", "2"], "hi"))
+
+
+    def test_next_account_without_the_model_gets_another_one(self):
+        """Main is out of limits; account 2 (a Free plan) doesn't include gpt-6-sol: it runs the same request on a model it has."""
+        from codex_os3 import codex_runner, engine
+        from codex_os3.codex_runner import UsageLimit
+        seen = []
+
+        def run(cfg, prompt, model, *a, account=None, **k):
+            seen.append((account, model))
+            if account == "main":
+                raise UsageLimit("usage limit")
+            if model.startswith("gpt-6-sol"):
+                raise UsageLimit("not supported when using Codex with a ChatGPT account", plan=True)
+            return '{"kind":"final","calls":[],"content":"hi"}', {}, "T1", None
+        store._w("DELETE FROM kv WHERE k LIKE 'no_model:%'")
+        body = {"model": "gpt-6-sol", "messages": [{"role": "system", "content": "You are a worker agent"}, {"role": "user", "content": "q"}],
+                "tools": [{"type": "function", "function": {"name": "shell", "parameters": {}}}]}
+        cfg = dict(self.cfg.load(), engine="exec", role_routing=False)
+        with mock.patch.object(codex_runner, "run", side_effect=run):
+            msg, _ = engine.Turn(cfg, body, lambda: True).run()
+        self.assertEqual(msg["content"], "hi")
+        self.assertEqual([a for a, m in seen], ["main", "2", "2"])
+        self.assertTrue(seen[-1][1].startswith("gpt-6-luna"))
 
 
 class UnconfirmedResultTest(unittest.TestCase):
