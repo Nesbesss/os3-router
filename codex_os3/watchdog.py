@@ -105,7 +105,8 @@ def rules(s):
         for pk, rk, wk, dflt in (("p_pct", "p_reset", "p_window", "5-hour"), ("s_pct", "s_reset", "s_window", "weekly")):
             pct, reset, win = lim.get(pk) or 0, lim.get(rk), store.win_label(lim.get(wk), dflt)
             if pct >= 90 and not (reset and reset < time.time()):  # a passed reset means it's fresh again
-                name = "Claude" if b == "claude" else "ChatGPT (Codex)"
+                name = ("Claude" if b == "claude" else f"ChatGPT account {b[6:]}" if b.startswith("codex:")
+                        else "ChatGPT (Codex)")  # which account, when there are several
                 out.append({"kind": "limit_high", "level": "warn", "action": None, "key": f"{b}:{win}:{reset}",
                             "msg": f"{name} {win} limit at {pct:.0f}%"})
     if s["hangs_30m"] >= 3:

@@ -350,6 +350,15 @@ class ClaudeBackendTest(unittest.TestCase):
         self.assertEqual((seen, msg["content"]), ([None], "hi"))
 
 
+class LimitWarningNameTest(unittest.TestCase):
+    def test_names_the_account(self):
+        snap = {"last_response": None, "agent": {}, "usage_limit": None, "hangs_30m": 0, "last_request_ago_s": None,
+                "limits": {b: {"p_pct": 95, "p_reset": time.time() + 3600, "p_window": 300, "s_pct": 0, "s_reset": None, "s_window": None}
+                           for b in ("codex", "codex:2", "claude")}}
+        msgs = [f["msg"] for f in watchdog.rules(snap)]
+        self.assertEqual(sorted(m.split(" 5-hour")[0] for m in msgs), ["ChatGPT (Codex)", "ChatGPT account 2", "Claude"])
+
+
 class AppServerStartTest(unittest.TestCase):
     def test_codex_that_fails_to_initialise_is_not_left_running(self):
         from codex_os3 import appserver
