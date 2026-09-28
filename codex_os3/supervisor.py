@@ -76,7 +76,7 @@ def run():
     signal.signal(signal.SIGINT, lambda *_: stop.set())
 
     worker = _spawn()
-    started, misses, last_check = time.time(), 0, 0.0
+    started, misses, last_check, crashes = time.time(), 0, 0.0, 0
     engine.log(f"supervisor {os.getpid()} started worker {worker.pid}")
     store.event("service_start", f"supervisor {os.getpid()}", source="supervisor")
     draining = []
@@ -120,9 +120,14 @@ def run():
                             source="supervisor", level="error")
             started, misses = time.time(), 0
         elif worker.poll() is not None:  # crashed: restart it
-            store.event("worker_crash", f"worker exited with {worker.returncode}; restarting",
-                        source="supervisor", level="error")
-            time.sleep(2)
+            # one that keeps dying at once (its port taken, a broken install) is retried ever more slowly,
+            # not every 2 s for ever: that filled the events table and the log
+            crashes = crashes + 1 if time.time() - started < 30 else 1
+            wait = min(2 * 2 ** (crashes - 1), 60)
+            if crashes <= 5 or crashes % 10 == 0:
+                store.event("worker_crash", f"worker exited with {worker.returncode} ({crashes} in a row); restarting in {wait}s",
+                            source="supervisor", level="error")
+            stop.wait(wait)
             worker = _spawn()
             started, misses = time.time(), 0
         elif time.time() - started > 60 and time.time() - last_check > 15:

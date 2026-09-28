@@ -350,6 +350,45 @@ class ClaudeBackendTest(unittest.TestCase):
         self.assertEqual((seen, msg["content"]), ([None], "hi"))
 
 
+class AppServerStartTest(unittest.TestCase):
+    def test_codex_that_fails_to_initialise_is_not_left_running(self):
+        from codex_os3 import appserver
+        proc = mock.Mock()
+        proc.poll.return_value = None
+        proc.stdout, proc.stderr = iter(()), iter(())
+        with mock.patch.object(appserver.subprocess, "Popen", return_value=proc), \
+                mock.patch.object(appserver, "known_features", return_value=set()), \
+                mock.patch.object(appserver.Server, "request", side_effect=RuntimeError("no answer")), \
+                mock.patch.object(appserver.platform_util, "kill_tree") as kill:
+            with self.assertRaises(RuntimeError):
+                appserver.Server("codex")
+        kill.assert_called_once_with(proc)
+
+    def test_one_slow_account_start_does_not_block_another(self):
+        import threading
+        from codex_os3 import appserver
+        gate, made = threading.Event(), []
+
+        class Slow:
+            def __init__(self, codex, account=None, images=False):
+                if account == "2":
+                    gate.wait(5)
+                made.append(account)
+                self.codex = codex
+
+            def alive(self):
+                return True
+        with mock.patch.object(appserver, "Server", Slow), mock.patch.dict(appserver._servers, clear=True), \
+                mock.patch.dict(appserver._starting, clear=True):
+            t = threading.Thread(target=appserver.server, args=({"codex_bin": "c"}, "2"))
+            t.start()
+            time.sleep(0.2)
+            appserver.server({"codex_bin": "c"}, None)     # main: must not wait for account 2's start
+            self.assertEqual(made, [None])
+            gate.set()
+            t.join()
+
+
 class UpdaterTest(unittest.TestCase):
     def test_install_from_release_archive(self):
         import io, tarfile
