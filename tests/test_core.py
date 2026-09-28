@@ -654,6 +654,7 @@ class AccountsTest(unittest.TestCase):
         self.assertEqual(a.pick(), "main")
         self.assertEqual(next(x for x in a.overview({})["accounts"] if x["id"] == "main")["plan"], "free")
         self.assertTrue(a.AUTH_RE.search('{"code": "token_invalidated"}'))
+        self.assertTrue(a.AUTH_RE.search("Your access token could not be refreshed because you have since logged out or signed in to another account."))
         self.assertFalse(a.AUTH_RE.search("You've hit your usage limit."))
 
     def test_pick_and_switch(self):

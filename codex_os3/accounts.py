@@ -11,7 +11,7 @@ SWITCH_AT = 95  # % of the 5-hour or weekly window: move to the next account bef
 MAIN = "main"
 # OpenAI signed this login out (e.g. the plan changed or the password was reset): it needs a new sign-in
 AUTH_RE = re.compile(r"token_invalidated|token has been invalidated|sign(?:ing)? in again|refresh_token_reused|"
-                     r"not logged in|401 unauthorized", re.I)
+                     r"could not be refreshed|not logged in|401 unauthorized", re.I)
 TERMS = ("Using more than one ChatGPT account with os3-router may go against OpenAI's terms of use. "
          "OpenAI could limit, suspend or close the accounts involved. You add accounts at your own risk: "
          "the os3-router developer is not responsible for any limits, suspensions, bans or lost access.")
