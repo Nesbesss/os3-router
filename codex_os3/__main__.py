@@ -72,14 +72,14 @@ def main(argv):
     if cmd == "setup-info":
         cfg = config.ensure_key()
         print(f"""
-  In OS3: Settings → API keys → provider "local"
-    device          : this machine
-    endpoint        : http://localhost:{cfg['port']}/v1
-    model id        : {cfg['model']}
-    api key         : {cfg['api_key']}
-    context window  : 200000   (advanced)
+     In OS3: Settings → API keys → add a provider "local" with:
+       device          this machine
+       endpoint        http://localhost:{cfg['port']}/v1
+       model id        {cfg['model']}
+       api key         {cfg['api_key']}
+       context window  200000   (advanced)
 
-  Dashboard: http://localhost:{cfg['port']}/""")
+     Dashboard: http://localhost:{cfg['port']}/  (the app's setup page walks you through it)""")
         return 0
     if cmd == "doctor":
         from . import ui_api

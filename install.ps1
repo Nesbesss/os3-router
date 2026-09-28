@@ -12,10 +12,15 @@ $AppDir = Join-Path $HomeDir "app"
 $TaskName = "codex-os3 router"
 $TrayTask = "codex-os3 tray"
 
-function Ok($m) { Write-Host "  [ok] $m" -ForegroundColor Green }
-function Warn($m) { Write-Host "  [!]  $m" -ForegroundColor Yellow }
-$Step = "starting"
-function Step($m) { $script:Step = $m; Write-Host $m -ForegroundColor White }
+# (ASCII marks: the classic Windows console font has no check mark)
+function Ok($m) { Write-Host "     [ok] " -ForegroundColor Green -NoNewline; Write-Host $m }
+function Warn($m) { Write-Host "     [!]  " -ForegroundColor Yellow -NoNewline; Write-Host $m }
+function Note($m) { Write-Host "          $m" -ForegroundColor DarkGray }
+$Step = "starting"; $StepN = 0; $T0 = Get-Date
+function Step($m) {
+    $script:Step = $m; $script:StepN++
+    Write-Host ""; Write-Host "  $script:StepN/7  " -ForegroundColor Cyan -NoNewline; Write-Host $m -ForegroundColor White
+}
 function Die($m) {
     Write-Host "  [x]  $m" -ForegroundColor Red
     Write-Host ""
@@ -48,7 +53,21 @@ if ($Uninstall) {
 New-Item -ItemType Directory -Force -Path $HomeDir | Out-Null
 try { Start-Transcript -Path (Join-Path $HomeDir "install.log") -Force | Out-Null } catch {}
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12  # PowerShell 5.1
-Write-Host "os3-router installer (Windows, beta)" -ForegroundColor White
+Write-Host ""
+Write-Host "  OS3 Router  " -ForegroundColor Cyan -NoNewline; Write-Host "installer for Windows (beta)" -ForegroundColor DarkGray
+Write-Host "  Your ChatGPT (Codex) subscription as the brain of rabbit OS3. Takes 1-3 minutes." -ForegroundColor DarkGray
+
+Step "Checking this machine"
+try { Invoke-WebRequest "https://github.com" -UseBasicParsing -TimeoutSec 15 -Method Head | Out-Null }
+catch { Die "can't reach github.com: check the internet connection (or a proxy / firewall) and re-run" }
+Ok "Windows $([Environment]::OSVersion.Version) - $env:PROCESSOR_ARCHITECTURE - online"
+if (Test-Path (Join-Path $env:USERPROFILE ".rabbit-agent")) { Ok "rabbit OS3 node found on this machine" }
+else {
+    Warn "no rabbit OS3 node on this machine yet: add this machine in OS3 (Settings -> add device) too;"
+    Note "the router must run on the same machine you pick as the LLM device in OS3"
+}
+
+Step "Python"
 
 # --- python --------------------------------------------------------------------------
 $Py = $null
@@ -64,7 +83,7 @@ foreach ($c in "python", "python3", "py") {
 $Uv = Join-Path $HomeDir "bin\uv.exe"
 $env:UV_PYTHON_INSTALL_DIR = Join-Path $HomeDir "python"
 if (-not $Py -and -not (Test-Path $Uv)) {  # no Python 3.9+: a private one for the router (nothing else changes)
-    Step "Getting Python for the router (no Python 3.9+ on this machine)"
+    Note "no Python 3.9+ here: getting a private one just for the router (1-2 minutes)"
     $env:UV_INSTALL_DIR = Join-Path $HomeDir "bin"; $env:UV_NO_MODIFY_PATH = "1"
     if (-not (Run-Installer "https://astral.sh/uv/install.ps1" "uv")) { Die "could not download uv (the Python installer): check the internet connection and re-run" }
 }
@@ -75,7 +94,9 @@ if (-not $Py -and (Test-Path $Uv)) {
 if (-not $Py) { Die "could not get Python 3.12: check the internet connection and re-run (or install Python from https://www.python.org/downloads/ with 'Add to PATH' ticked)" }
 $PyW = Join-Path (Split-Path $Py) "pythonw.exe"
 if (-not (Test-Path $PyW)) { $PyW = $Py }
-Ok "python: $Py"
+Ok "Python  $Py"
+
+Step "Codex CLI"
 
 # --- codex cli -------------------------------------------------------------------------
 # -CommandType Application: codex.cmd/.exe, not the codex.ps1 shim (Windows can't start a .ps1
@@ -85,14 +106,16 @@ $Standalone = Join-Path $env:LOCALAPPDATA "Programs\OpenAI\Codex\bin\codex.exe"
 if (-not $Codex -and (Test-Path $Standalone)) { $Codex = $Standalone }  # installed, not on PATH in this window yet
 if (-not $Codex) {
     # OpenAI's own standalone installer: no Node.js needed
-    Step "Installing the Codex CLI"
+    Note "installing it with OpenAI's installer"
     $env:CODEX_NON_INTERACTIVE = "1"
     if (-not (Run-Installer "https://github.com/openai/codex/releases/latest/download/install.ps1" "codex") -or -not (Test-Path $Standalone)) {
         Die "could not install the Codex CLI: check the internet connection and re-run"
     }
     $Codex = $Standalone
 }
-Ok "codex: $Codex"
+Ok "Codex CLI  $Codex"
+
+Step "ChatGPT sign-in"
 # Windows PowerShell 5.1 turns any native stderr output into a terminating NativeCommandError while
 # $ErrorActionPreference is "Stop", even when the command exits 0 ("Logged in using ChatGPT" goes to
 # stderr). So run the status check with "Continue" and judge only by its exit code.
@@ -100,7 +123,7 @@ $prevEap = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
 try { & $Codex login status *> $null; $loginStatus = $LASTEXITCODE } finally { $ErrorActionPreference = $prevEap }
 if ($loginStatus -ne 0) {
-    Step "Sign in to Codex with your ChatGPT account"
+    Note "sign in with the ChatGPT account whose plan the router should use"
     $ErrorActionPreference = "Continue"
     try {
         if ($env:SSH_CONNECTION) { & $Codex login --device-auth } else { & $Codex login }  # over SSH: a link + code instead of a browser
@@ -108,13 +131,11 @@ if ($loginStatus -ne 0) {
     } finally { $ErrorActionPreference = $prevEap }
     if ($loginStatus -ne 0) { Die "Codex isn't signed in (the sign-in was cancelled or timed out): re-run to try again" }
 }
-Ok "codex is signed in"
+Ok "signed in to ChatGPT"
 
-# --- rabbit-agent ----------------------------------------------------------------------
-if (Test-Path (Join-Path $env:USERPROFILE ".rabbit-agent")) { Ok "rabbit-agent found on this machine" }
-else { Warn "no rabbit OS3 node on this machine yet — install it from OS3 first; the router must run on the machine you pick as the LLM device" }
 
 # --- code ------------------------------------------------------------------------------
+Step "OS3 Router"
 New-Item -ItemType Directory -Force -Path $HomeDir | Out-Null
 $New = Join-Path $HomeDir "app.new"
 Remove-Item -Recurse -Force $New -ErrorAction SilentlyContinue
@@ -137,7 +158,7 @@ $OldVersion = ""
 try { $OldVersion = ([regex]'__version__ = "([^"]+)"').Match((Get-Content (Join-Path $AppDir "codex_os3\__init__.py") -Raw)).Groups[1].Value } catch {}
 Remove-Item -Recurse -Force $AppDir -ErrorAction SilentlyContinue
 Move-Item $New $AppDir
-Ok "installed to $AppDir"
+Ok "os3-router  $AppDir"
 
 Push-Location $AppDir
 $env:CODEX_OS3_HOME = $HomeDir
@@ -150,6 +171,7 @@ if ($Port) { & $Py -c "from codex_os3 import config; config.save({'port': $Port}
 $Port = [int](& $Py -c "from codex_os3 import config; print(config.load()['port'])")
 
 # --- service: a Task Scheduler task at logon, restarted if it stops ---------------------
+Step "Background service"
 if ($Running) {
     & $Py -m codex_os3 reload | Out-Null; Ok "upgraded (Windows reload has a ~1 s gap)"
 } else {
@@ -170,7 +192,9 @@ if (-not $up) {
     Get-Content (Join-Path $HomeDir "service.log") -Tail 25 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "    $_" }
     Die "router did not start (the lines above are the end of $HomeDir\service.log)"
 }
-Ok "router answering on http://127.0.0.1:$Port"
+Ok "router running on http://127.0.0.1:$Port"
+
+Step "App and OS3 connection"
 
 # --- tray app --------------------------------------------------------------------------
 if (-not $NoTray) {
@@ -194,7 +218,10 @@ catch { Warn "could not create the Start menu entry: $_" }
 & $Py -m codex_os3 setup-info
 if ($NoWait) { Pop-Location; try { Stop-Transcript | Out-Null } catch {}; exit 0 }
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $OpenApp -Page setup
-Write-Host "Waiting for OS3 to connect… (save the connection in OS3 and send it a message; Ctrl-C to skip)"
+Write-Host ""
+Write-Host "  Installed in $([int]((Get-Date) - $T0).TotalSeconds)s" -ForegroundColor Green
+Write-Host ""
+Write-Host "  Last step: " -NoNewline; Write-Host "save the connection in OS3 and send it a message. Waiting for OS3... (Ctrl-C to skip)" -ForegroundColor DarkGray
 & $Py -m codex_os3 wait-for-os3 1800 | Out-Null
 if ($LASTEXITCODE -eq 0) { Ok "OS3 is connected — you're done" } else { Warn "no request from OS3 yet; the dashboard shows when it connects" }
 Pop-Location

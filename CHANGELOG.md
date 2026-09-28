@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.3 (2026-09-28)
+- **Pick which account is used first.** Accounts has a *Use first* button: put your account with a 5-hour window first and keep another as the leftover. The router moves to the next account when the first is almost out, and goes back once it resets.
+- **Signed-out accounts are handled.** When OpenAI ends a login (for example after a plan change), the account shows *Signed out* with a *Sign in again* button (main too), requests move to your other accounts, and you get a notification instead of errors.
+- **The plan shown is the real one.** It now comes from OpenAI's live usage data, so a changed plan shows right away instead of days later.
+- **A much friendlier installer.** No Node.js or Python needed anymore (it gets them itself), sign-in works without a browser (a link and a code), numbered steps with progress, a free port is picked if 11435 is taken, and if something fails it tells you which step and what to do. Everything is saved to `~/.codex-os3/install.log`.
+
 ## 0.5.2 (2026-09-28)
 - **Codex Max plan:** only the windows your plan has are shown. Max has a weekly limit and no 5-hour one, so you now see one weekly ring instead of an empty 5-hour ring. Rings, warnings and `codex-os3 status` are labelled 5-hour / daily / weekly / monthly.
 - **Codex Free plan:** when a model isn't included in your plan, the router runs the request on one that is (e.g. gpt-6-sol → gpt-6-luna) instead of replying "not included". It remembers this per account for a day, so an upgraded plan gets its models back by itself.
