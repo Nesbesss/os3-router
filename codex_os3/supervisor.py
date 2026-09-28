@@ -42,8 +42,30 @@ def _healthy(cfg, pid, timeout=40):
     return False
 
 
+def already_running(cfg):
+    """Another supervisor is alive and its router answers (e.g. a cron keep-alive started a second
+    copy). POSIX only: signal 0 means something else on Windows, where Task Scheduler runs one copy."""
+    try:
+        with open(PIDFILE) as f:
+            pid = int(f.read().strip())
+        if os.name == "nt" or pid == os.getpid():
+            return False
+        os.kill(pid, 0)
+    except (OSError, ValueError):
+        return False
+    host = "127.0.0.1" if cfg["bind"] in ("0.0.0.0", "::") else cfg["bind"]
+    try:
+        with urllib.request.urlopen(f"http://{host}:{cfg['port']}/health", timeout=3) as r:
+            return json.loads(r.read()).get("status") == "ok"
+    except Exception:
+        return False
+
+
 def run():
-    config.ensure_key()
+    cfg = config.ensure_key()
+    if already_running(cfg):
+        print("os3-router is already running: not starting a second copy", flush=True)
+        return
     os.makedirs(config.HOME, exist_ok=True)
     with open(PIDFILE, "w") as f:
         f.write(str(os.getpid()))

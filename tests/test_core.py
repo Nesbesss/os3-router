@@ -842,3 +842,25 @@ class BrowserBehaviourTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SecondRouterTest(unittest.TestCase):
+    """A keep-alive (cron, ~/.profile) must not start a second router next to a running one."""
+    def test_already_running(self):
+        from codex_os3 import supervisor
+        if os.name == "nt":
+            self.skipTest("POSIX only")
+        cfg = {"bind": "127.0.0.1", "port": 1}
+        ok = mock.MagicMock()
+        ok.__enter__.return_value.read.return_value = b'{"status": "ok", "pid": 1}'
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(supervisor, "PIDFILE", os.path.join(d, "pid")):
+            self.assertFalse(supervisor.already_running(cfg))            # no pid file
+            with open(supervisor.PIDFILE, "w") as f:
+                f.write(str(os.getppid()))                                 # a live process
+            with mock.patch.object(supervisor.urllib.request, "urlopen", return_value=ok):
+                self.assertTrue(supervisor.already_running(cfg))
+            self.assertFalse(supervisor.already_running(cfg))            # alive, but nothing answers: stale
+            with open(supervisor.PIDFILE, "w") as f:
+                f.write("999999")                                          # dead
+            with mock.patch.object(supervisor.urllib.request, "urlopen", return_value=ok):
+                self.assertFalse(supervisor.already_running(cfg))
