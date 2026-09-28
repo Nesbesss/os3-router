@@ -182,7 +182,9 @@ def handle(method, path, data, q, cfg):
                      "usage_limit": store.kv_get("usage_limit"), "agent": os3.status(),
                      "watchdog": wd, "running": running, "model": cfg["model"],
                      "no_sleep": bool(cfg["no_sleep"]), "sleep_supported": sys.platform in sleep_control.SUPPORTED,
-                     "endpoint": f"http://localhost:{cfg['port']}/v1"}, J
+                     # 127.1 = 127.0.0.1: rabbit's firewall blocks saving a connection whose body contains
+                     # http://localhost or http://127.0.0.1 (HTTP 403 in OS3's models and connections)
+                     "endpoint": f"http://127.1:{cfg['port']}/v1"}, J
     if path == "updates":
         from . import updater
         if method == "GET":

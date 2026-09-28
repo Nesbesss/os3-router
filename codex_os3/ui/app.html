@@ -551,7 +551,8 @@ const chip = (v) => `<button class="copy" data-copy="${esc(v)}"><code>${esc(v)}<
 const shots = (imgs) => `<div class="shots">${imgs.map(([n, c]) => `<figure><img src="/guide/${n}.jpg" alt="${esc(c || "OS3 screenshot")}">${c ? `<figcaption>${c}</figcaption>` : ""}</figure>`).join("")}</div>`;
 const checks = (steps) => `<ul class="checks">${steps.map(x => `<li data-s="${x.state}"><span class="i">${x.state === "ok" ? "✓" : x.state === "waiting" ? "…" : "!"}</span><div class="t"><b>${esc(x.title)}</b><div class="d">${esc(x.detail)}</div></div>${x.action ? `<button class="btn primary" data-fix="${x.action}">Fix</button>` : ""}</li>`).join("")}</ul>`;
 function screens(o) {
-  const ep = `http://localhost:${o.port}/v1`, machine = o.steps.filter(x => x.id === "engine" || x.id === "node");
+  const ep = `http://127.1:${o.port}/v1`,  // not localhost: rabbit's firewall blocks saving that (HTTP 403)
+        machine = o.steps.filter(x => x.id === "engine" || x.id === "node");
   const S = [
     {id: "welcome", title: "Connect OS3 to your router", body: `<p class="lead">This takes about two minutes. You add one connection in OS3 (the app or website), and this app checks every step for you.</p><p class="lead">Keep OS3 open next to this window.</p>`, next: "Start"},
     {id: "machine", title: "Check this computer", body: `<p class="lead">The router needs your AI subscription and the OS3 node on this computer.</p>${checks(machine)}`, ok: machine.every(x => x.state === "ok"), test: true},
@@ -561,7 +562,7 @@ function screens(o) {
     {id: "s1", title: "Open API keys", body: `<p class="lead">In OS3, open <b>Settings</b> and click <b>api keys</b>.</p>${shots([["1-api-keys"]])}`},
     {id: "s2", title: "Choose “Local model”", body: `<p class="lead">Under <b>provider</b>, pick <b>Local model</b>. It's near the bottom of the list.</p>${shots([["2-provider"]])}`},
     {id: "s3", title: "Choose this computer", body: `<p class="lead">Under <b>device</b>, pick <b>${esc(o.host)}</b>, the computer this router runs on.</p>${shots([["3-device"]])}`},
-    {id: "s4", title: "Paste the endpoint", body: `<p class="lead">OS3 fills in port 11434 (that's for Ollama). Replace it with:</p><p>${chip(ep)}</p>${o.port != 11435 ? `<div class="alert warn">This router uses port <b>${o.port}</b>, not the 11435 in the picture.</div>` : ""}${shots([["4-endpoint-wrong", "✗ what OS3 fills in"], ["4-endpoint", "✓ what it should be"]])}`},
+    {id: "s4", title: "Paste the endpoint", body: `<p class="lead">OS3 fills in port 11434 (that's for Ollama). Replace it with:</p><p>${chip(ep)}</p><p class="muted">Replace the whole address, <b>localhost</b> included: 127.1 is the same address as localhost, but rabbit blocks saving one that says localhost (“HTTP 403”).</p>${o.port != 11435 ? `<div class="alert warn">This router uses port <b>${o.port}</b>, not the 11435 in the picture.</div>` : ""}${shots([["4-endpoint-wrong", "✗ what OS3 fills in"], ["4-endpoint", "✓ what it should be"]])}`},
     {id: "s5", title: "Type a model id", body: `<p class="lead">Type this. It's only a label; the router picks the real models (see Models).</p><p>${chip(o.model)}</p>${shots([["5-model"]])}`},
     {id: "s6", title: "Paste the API key", body: `<p>${chip(o.key)}</p>${shots([["6-key"]])}`},
     {id: "s7", title: "Save", body: `<p class="lead">Press <b>save connection</b>. OS3 tests it (up to a minute) and should show <b>registered</b> and <b>last used · ok</b>.</p>${shots([["7-saved"]])}`, next: "I saved it"},
@@ -651,7 +652,7 @@ VIEWS.settings = {static: true, async draw() {
       ${sw("watchdog", "Watch over the OS3 node", "Restarts this computer's OS3 node when it gets stuck.")}
       ${sw("share_reports", "Share problem reports", "Anonymous notes to the developer when something breaks or gets fixed.")}</div>
     <div class="card" style="margin-top:16px"><h2>Connection details</h2>
-      <div class="mrow"><span>Endpoint</span>${chip(`http://localhost:${CFG.port}/v1`)}</div><div class="mrow"><span>API key</span>${chip(CFG.api_key)}</div>
+      <div class="mrow"><span>Endpoint</span>${chip(`http://127.1:${CFG.port}/v1`)}</div><div class="mrow"><span>API key</span>${chip(CFG.api_key)}</div>
       <div class="row" style="margin-top:12px"><button class="btn" id="rot">New API key</button><span class="muted">Then delete and add the connection in OS3 again.</span></div></div>
     <p class="muted" style="margin-top:18px">OS3 Router ${esc(S.status?.version)} · <a class="link" href="/" target="_blank">Open the web dashboard</a></p>`;
   await refreshUpdates();

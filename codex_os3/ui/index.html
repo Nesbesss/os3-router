@@ -379,7 +379,7 @@ const chip = (v) => `<button class="chip" data-copy="${esc(v)}"><code>${esc(v)}<
 const shot = (n, cap) => `<figure><img src="/guide/${n}.jpg" alt="${esc(cap || "")}" loading="lazy">${cap ? `<figcaption>${cap}</figcaption>` : ""}</figure>`;
 let HASOLD = null, WZ = null, OB = null;
 function screens(o) {
-  const endpoint = `http://localhost:${o.port}/v1`;
+  const endpoint = `http://127.1:${o.port}/v1`;  // not localhost: rabbit's firewall blocks saving that (HTTP 403)
   const machine = o.steps.filter(x => x.id === "engine" || x.id === "node");
   const S = [
     {id: "welcome", title: "Connect OS3 to your router", body: `<div class="hero">👋</div><p class="lead">This takes about two minutes. You'll add one connection in OS3 (the app or website), and this page checks each step for you.</p><p class="lead">Keep OS3 open next to this page.</p>`, next: "Start"},
@@ -392,7 +392,7 @@ function screens(o) {
     {id: "s1", title: "Open API keys", body: `<p class="lead">In OS3, open <b>Settings</b> and click <b>api keys</b>. Then add a new connection.</p>${big([["1-api-keys"]])}`},
     {id: "s2", title: "Choose “Local model”", body: `<p class="lead">Under <b>provider</b>, choose <b>Local model</b>. It's near the bottom of the list.</p>${big([["2-provider"]])}`},
     {id: "s3", title: "Choose this machine", body: `<p class="lead">Under <b>device</b>, choose <b>${esc(o.host)}</b>: the computer this router runs on. Not another device.</p>${big([["3-device"]])}`},
-    {id: "s4", title: "Endpoint", body: `<p class="lead">OS3 fills in port <b>11434</b> (that's for Ollama). Delete it and paste:</p><p>${chip(endpoint)}</p>${o.port != 11435 ? `<div class="alert bad">Your router uses port <b>${o.port}</b>, not the 11435 in the screenshot. Paste the address above.</div>` : ""}${big([["4-endpoint-wrong", "✗ what OS3 fills in (11434)"], ["4-endpoint", "✓ the router (11435)"]])}`},
+    {id: "s4", title: "Endpoint", body: `<p class="lead">OS3 fills in port <b>11434</b> (that's for Ollama). Delete it and paste:</p><p>${chip(endpoint)}</p><p class="muted">Replace the whole address, <b>localhost</b> included: 127.1 is the same address as localhost, but rabbit blocks saving one that says localhost (“HTTP 403”).</p>${o.port != 11435 ? `<div class="alert bad">Your router uses port <b>${o.port}</b>, not the 11435 in the screenshot. Paste the address above.</div>` : ""}${big([["4-endpoint-wrong", "✗ what OS3 fills in (11434)"], ["4-endpoint", "✓ the router (11435)"]])}`},
     {id: "s5", title: "Model id", body: `<p class="lead">Type:</p><p>${chip(o.model)}</p><p class="lead">It's only a label. The router picks the real model for each role (you can change them later in Settings → Models).</p>${big([["5-model"]])}`},
     {id: "s6", title: "API key", body: `<p class="lead">Paste the router's key:</p><p>${chip(o.key)}</p>${big([["6-key"]])}`},
     {id: "s7", title: "Save", body: `<p class="lead">Press <b>save connection</b>. OS3 now tests the connection; it can take up to a minute. It should then show <b>registered · Local model</b> and <b>last used · ok</b>.</p>${big([["7-saved"]])}`, next: "I saved it"},
