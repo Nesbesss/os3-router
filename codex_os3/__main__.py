@@ -53,6 +53,9 @@ def main(argv):
         ui_api.request_reload()
         print("reload requested")
         return 0
+    if cmd in ("preflight", "verify"):  # used by the installers
+        from . import preflight
+        return getattr(preflight, cmd)(argv[1:])
     if cmd == "keepalive":  # OS3 node without the router: keep its rabbit-agent connected
         from . import watchdog
         watchdog.keepalive()

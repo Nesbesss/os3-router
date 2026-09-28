@@ -9,6 +9,19 @@ UI_DIR = os.path.join(os.path.dirname(__file__), "ui")
 LOCAL = ("127.0.0.1", "::1", "::ffff:127.0.0.1")
 
 
+def loopback_host(host):
+    """Is this a Host header that names this machine (localhost, 127.x incl. short forms like 127.1, ::1)?
+    No header at all is a non-browser client."""
+    h = host.strip().lower()
+    h = h[1:h.find("]")] if h.startswith("[") else h.rsplit(":", 1)[0] if h.count(":") == 1 else h
+    if h in ("", "localhost", "::1") or h.endswith(".localhost"):
+        return True
+    try:
+        return socket.inet_aton(h)[0] == 127
+    except OSError:
+        return False
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     server_version = "os3-router/" + __version__
@@ -31,7 +44,9 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(raw)
 
     def local(self):
-        return self.client_address[0] in LOCAL
+        """From this machine and addressed by a loopback name. A web page whose own name was re-pointed
+        to 127.0.0.1 (DNS rebinding) also arrives from here, but with its own name in Host."""
+        return self.client_address[0] in LOCAL and loopback_host(self.headers.get("Host", ""))
 
     def api_key_ok(self, cfg):
         got = self.headers.get("Authorization", "")

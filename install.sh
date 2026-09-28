@@ -4,11 +4,11 @@
 # Options: --uninstall [--purge]   --no-app   --no-wait   --port N
 #          --node-only   only a keep-alive for this machine's rabbit-agent (OS3 nodes that don't run the router)
 # Env:     CODEX_OS3_SRC=<local checkout>  (install from a folder instead of GitHub)
-#          CODEX_OS3_REF=<branch|tag>       (default: main)
+#          CODEX_OS3_REF=<branch|tag>       (default: the latest release)
 set -euo pipefail
 
 REPO="Nesbesss/os3-router"
-REF="${CODEX_OS3_REF:-main}"
+REF="${CODEX_OS3_REF:-}"  # empty: the latest release (main only if GitHub can't say which it is)
 HOME_DIR="${CODEX_OS3_HOME:-$HOME/.codex-os3}"
 APP_DIR="$HOME_DIR/app"
 LABEL="ai.codexos3.router"
@@ -64,6 +64,13 @@ autostart() {
   printf '%s\n%s\n' "$rest" "[ -x \"$1\" ] && \"$1\" >/dev/null 2>&1 # codex-os3-keepalive" > "$prof"
   return 1
 }
+# a failed upgrade must not leave the machine without a router: put the previous copy back
+restore_previous() {
+  [ "${SWAPPED:-0}" = 1 ] && [ -d "$APP_DIR.old" ] || return 0  # (only for the copy this run set aside)
+  rm -rf "$APP_DIR"; mv "$APP_DIR.old" "$APP_DIR" || return 0
+  printf '  %sThe previous version was put back, so the router you had keeps working.%s\n' "$DIM" "$OFF"
+  if [ -n "${PY:-}" ]; then (cd "$APP_DIR" && "$PY" -m codex_os3 reload >/dev/null 2>&1) || true; fi
+}
 tty_in() { if ( : </dev/tty ) 2>/dev/null; then "$@" </dev/tty; else "$@"; fi; }
 
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
@@ -92,7 +99,7 @@ if [ "$UNINSTALL" = 1 ]; then
     [ -f "$HOME/.profile" ] && { grep -v "# codex-os3-keepalive" "$HOME/.profile" > "$HOME/.profile.os3" || true; cat "$HOME/.profile.os3" > "$HOME/.profile"; rm -f "$HOME/.profile.os3"; }
     pkill -f -- "-m codex_os3 (serve|worker)" 2>/dev/null || true
   fi
-  rm -rf "$APP_DIR"
+  rm -rf "$APP_DIR" "$APP_DIR.old"
   [ "$PURGE" = 1 ] && rm -rf "$HOME_DIR" && ok "removed all data ($HOME_DIR)"
   ok "done"; exit 0
 fi
@@ -104,9 +111,19 @@ exec 3>&1  # the terminal itself: spinners go there, not into the log
 exec > >(tee -a "$LOG") 2>&1
 STEP="starting"; FAILED_CMD=""
 trap 'FAILED_CMD=$BASH_COMMAND' ERR
+{ echo "--- os3-router install $(date)"; uname -a; command -v sw_vers >/dev/null 2>&1 && sw_vers; echo "SHELL=${SHELL:-} PATH=$PATH"; } >>"$LOG" 2>&1 || true
+# what a person helping needs to see, appended to the log when an install stops (nothing here leaves the machine)
+diagnostics() {
+  { echo "--- diagnostics after the failure (step: $STEP)"
+    command -v python3 codex claude node 2>&1 || true
+    if [ -n "${PY:-}" ] && [ -f "$APP_DIR/codex_os3/__init__.py" ]; then (cd "$APP_DIR" && "$PY" -m codex_os3 doctor) 2>&1 || true; fi
+    tail -n 40 "$HOME_DIR/service.log" 2>/dev/null || true; } >>"$LOG" 2>&1 || true
+}
 on_exit() {
   code=$?
   [ "$code" = 0 ] && return
+  diagnostics
+  restore_previous
   printf '\n  %s%sThe install stopped%s during: %s\n' "$RED" "$BOLD" "$OFF" "$STEP"
   [ -n "$FAILED_CMD" ] && printf '  %sfailed command: %s%s\n' "$DIM" "$FAILED_CMD" "$OFF"
   printf '\n  • Running the same install command again is safe: it continues where it can.\n'
@@ -146,7 +163,8 @@ py_ok() { "$1" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)'
 UV="$HOME_DIR/bin/uv"
 uv_py() { UV_PYTHON_INSTALL_DIR="$HOME_DIR/python" "$UV" "$@"; }
 PY=""
-for c in python3 /opt/homebrew/bin/python3 /usr/local/bin/python3 /usr/bin/python3; do
+# (the fixed locations first: python3 on PATH may be conda/pyenv, which the service then depends on for good)
+for c in /opt/homebrew/bin/python3 /usr/local/bin/python3 /usr/bin/python3 python3; do
   p="$(command -v "$c" 2>/dev/null)" || continue
   # macOS without the developer tools: /usr/bin/python3 is a stub that pops up an install dialog
   [ "$OS" = Darwin ] && [ "$p" = /usr/bin/python3 ] && ! xcode-select -p >/dev/null 2>&1 && continue
@@ -214,6 +232,10 @@ fi
 # --------------------------------------------------------------------------- code
 b "OS3 Router"
 NEW="$HOME_DIR/app.new"; rm -rf "$NEW"; mkdir -p "$NEW"
+if [ -z "$REF" ] && [ -z "${CODEX_OS3_SRC:-}" ]; then  # a fresh install gets what updates would give it: a tested release, not main
+  REF="$(curl -fsSL -m 15 -o /dev/null -w '%{url_effective}' "https://github.com/$REPO/releases/latest" 2>/dev/null | sed -n 's|.*/releases/tag/||p')"
+  case "$REF" in v[0-9]*.[0-9]*.[0-9]*) ;; *) REF="main"; warn "couldn't find the latest release: installing the newest code (main)" ;; esac
+fi
 if [ -n "${CODEX_OS3_SRC:-}" ]; then
   (cd "$CODEX_OS3_SRC" && tar --exclude .git --exclude app/macos/.build --exclude _proto -cf - .) | (cd "$NEW" && tar xf -)
 else
@@ -225,7 +247,9 @@ else
 fi
 [ -f "$NEW/codex_os3/__init__.py" ] || die "download looks incomplete"
 OLD_VERSION=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' "$APP_DIR/codex_os3/__init__.py" 2>/dev/null || true)
-rm -rf "$APP_DIR.old"; [ -d "$APP_DIR" ] && mv "$APP_DIR" "$APP_DIR.old"; mv "$NEW" "$APP_DIR"; rm -rf "$APP_DIR.old"
+rm -rf "$APP_DIR.old"; [ -d "$APP_DIR" ] && mv "$APP_DIR" "$APP_DIR.old"  # kept until the new one runs
+mv "$NEW" "$APP_DIR" || die "could not put the new version in place ($APP_DIR)"
+SWAPPED=1
 VERSION="$("$PY" -c "import sys; sys.path.insert(0, '$APP_DIR'); import codex_os3; print(codex_os3.__version__)")"
 ok "os3-router $VERSION$( [ -n "$OLD_VERSION" ] && [ "$OLD_VERSION" != "$VERSION" ] && echo " (was $OLD_VERSION)")  ${DIM}$APP_DIR${OFF}"
 
@@ -271,42 +295,22 @@ KEEP
     autostart "$KEEP" || warn "no systemd or cron here: it starts at each login (~/.profile); for start at boot install cron"
     "$KEEP" 3>&-  # (fd 3 is the installer's terminal: a background process must not hold it)
   fi
+  rm -rf "$APP_DIR.old"; SWAPPED=0
   ok "keep-alive running: it restarts this machine's rabbit-agent when it stops or stays disconnected (e.g. after sleep)"
   note "it updates itself; remove it with: bash install.sh --uninstall"
   printf '\n  %s%s✓ Done%s in %ds\n\n' "$GRN" "$BOLD" "$OFF" $((SECONDS - T0))
   exit 0
 fi
-[ -n "$PORT" ] && "$PY" -c "from codex_os3 import config; config.save({'port': int('$PORT')})"
-# another program on the router's port: take the next free one (OS3's endpoint below shows it)
-if [ -z "$PORT" ]; then
-  "$PY" - <<'PY' || true
-import json, socket, urllib.request
-from codex_os3 import config
-port = config.load()["port"]
-def ours(p):
-    try:
-        return json.load(urllib.request.urlopen(f"http://127.0.0.1:{p}/health", timeout=2)).get("status") == "ok"
-    except Exception:
-        return False
-def busy(p):
-    with socket.socket() as s:
-        s.settimeout(1)
-        return s.connect_ex(("127.0.0.1", p)) == 0
-if busy(port) and not ours(port):
-    free = next(p for p in range(port + 1, port + 50) if not busy(p))
-    config.save({"port": free})
-    print(f"     ! port {port} is used by another program: the router uses {free}")
-PY
-fi
+# a port the router can really listen on (another program, or Windows reserving it, means the next free one),
+# and where Claude Code is (the service's PATH is not this shell's)
+"$PY" -m codex_os3 preflight ${PORT:+"$PORT"} || die "no usable port for the router${PORT:+ (port $PORT)}: pick another with --port"
 "$PY" -c "from codex_os3 import config; config.save({'codex_bin': '$CODEX'}); config.ensure_key()"
 # this installer brings the matching menu bar app itself; the router only updates apps on later updates
 "$PY" -c "from codex_os3 import store, __version__; store.kv_set('apps_version', __version__)"
 # "what's new" popup: after an upgrade, everything since the old version; nothing on a fresh install
 "$PY" -c "from codex_os3 import store, __version__; store.kv_set('whatsnew_seen', '${OLD_VERSION}' or __version__)"
-CLAUDE=$(command -v claude || true)  # optional: lets roles use Claude models via Claude Code
-[ -n "$CLAUDE" ] && "$PY" -c "from codex_os3 import config; config.save({'claude_bin': '$CLAUDE'})" && ok "Claude Code found: $CLAUDE"
 PORT="$("$PY" -c "from codex_os3 import config; print(config.load()['port'])")"
-SVC_PATH="$(dirname "$CODEX"):$(dirname "$(command -v node 2>/dev/null || echo /usr/bin/node)"):/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+SVC_PATH="$(dirname "$CODEX"):$HOME/.local/bin:$(dirname "$(command -v node 2>/dev/null || echo /usr/bin/node)"):/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
 # --------------------------------------------------------------------------- service
 b "Background service"
@@ -388,6 +392,10 @@ done || true
 "$PY" -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:$PORT/health', timeout=2)" 2>/dev/null \
   && ok "router running on http://127.0.0.1:$PORT" \
   || { tail -n 25 "$HOME_DIR/service.log" 2>/dev/null | sed 's/^/    /'; die "router did not start (the lines above are the end of $HOME_DIR/service.log)"; }
+rm -rf "$APP_DIR.old"; SWAPPED=0  # the new version runs: the rollback copy isn't needed
+# what the running service sees (not this shell): Codex, the sign-in, Claude; plus one real request when someone is watching
+VFLAG=""; [ "$NO_WAIT" = 0 ] && { note "testing with a real request (up to a minute)"; VFLAG="--selftest"; }
+"$PY" -m codex_os3 verify $VFLAG || warn "something above needs a look; the app's Help page can walk you through it"
 
 # --------------------------------------------------------------------------- app + connect OS3
 b "App and OS3 connection"
