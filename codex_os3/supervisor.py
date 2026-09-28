@@ -8,7 +8,7 @@ refused connection. Windows has no SO_REUSEPORT: there the old worker stops list
 first and the new one starts right after (a gap of about a second)."""
 import json, os, signal, socket, subprocess, sys, threading, time, urllib.request
 
-from . import config, engine, sleep_control, store
+from . import config, engine, platform_util, sleep_control, store
 
 PIDFILE = os.path.join(config.HOME, "supervisor.pid")
 RELOAD_FILE = os.path.join(config.HOME, "reload.request")
@@ -76,6 +76,7 @@ def run():
     signal.signal(signal.SIGINT, lambda *_: stop.set())
 
     worker = _spawn()
+    started, misses, last_check = time.time(), 0, 0.0
     engine.log(f"supervisor {os.getpid()} started worker {worker.pid}")
     store.event("service_start", f"supervisor {os.getpid()}", source="supervisor")
     draining = []
@@ -107,15 +108,36 @@ def run():
                 worker = new
                 engine.log(f"reloaded: new worker {new.pid}, draining old")
                 store.event("reload", f"worker swapped to {new.pid}", source="supervisor")
-            else:
+            elif REUSEPORT:
                 new.kill()
                 store.event("reload_failed", "new worker never became healthy; kept the old one",
                             source="supervisor", level="error")
+            else:  # Windows: the old one already stopped listening, so keeping it would leave nobody on the port
+                new.kill()
+                draining.append(worker)
+                worker = _spawn()
+                store.event("reload_failed", f"new worker never became healthy; started another ({worker.pid})",
+                            source="supervisor", level="error")
+            started, misses = time.time(), 0
         elif worker.poll() is not None:  # crashed: restart it
             store.event("worker_crash", f"worker exited with {worker.returncode}; restarting",
                         source="supervisor", level="error")
             time.sleep(2)
             worker = _spawn()
+            started, misses = time.time(), 0
+        elif time.time() - started > 60 and time.time() - last_check > 15:
+            # running but not answering (e.g. stuck after a failed swap): the app shows "refused to connect"
+            last_check = time.time()
+            misses = 0 if _healthy(config.load(), worker.pid, timeout=5) else misses + 1
+            if misses >= 3:
+                store.event("worker_unresponsive", f"worker {worker.pid} stopped answering; restarting it",
+                            source="supervisor", level="error")
+                # Windows: with its codex children (taskkill /T); elsewhere the worker isn't a group leader
+                platform_util.kill_tree(worker) if os.name == "nt" else worker.kill()
+                if not REUSEPORT:
+                    time.sleep(1.5)
+                worker = _spawn()
+                started, misses = time.time(), 0
     for p in [worker] + draining:
         if p.poll() is None:
             drain(p)

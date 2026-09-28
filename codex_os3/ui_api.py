@@ -74,7 +74,7 @@ def codex_info(cfg=None):
 
 @cached
 def claude_info(cfg):
-    b = platform_util.native_bin(cfg.get("claude_bin") or shutil.which("claude"))
+    b = platform_util.native_bin(roles.claude_path(cfg))
     info = {"path": b, "logged_in": None, "detail": ""}
     if not b:
         return info
