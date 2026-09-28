@@ -18,21 +18,41 @@ def ver(v):
         return (0,)
 
 
-def _get(url, timeout=60):
+def _request(url, timeout=60, method="GET"):
+    request = urllib.request.Request(url, headers={"User-Agent": "os3-router/" + __version__}, method=method)
     try:
-        return urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "os3-router/" + __version__}),
-                                      timeout=timeout).read()
+        response = urllib.request.urlopen(request, timeout=timeout)
+        try:
+            return (response.read() if method != "HEAD" else b""), response.geturl()
+        finally:
+            response.close()
     except urllib.error.URLError as e:
         # Python without usable root certificates (python.org macOS builds; Windows only has the roots
         # already installed). curl uses the OS's own trust (Windows fetches missing roots itself).
         curl = shutil.which("curl.exe" if os.name == "nt" else "curl")
         if "CERTIFICATE_VERIFY_FAILED" not in str(e) or not curl:
             raise
-        r = subprocess.run([curl, "-fsSL", "--max-time", str(timeout), "-A", "os3-router/" + __version__, url],
-                           capture_output=True, timeout=timeout + 10)
-        if r.returncode:
-            raise RuntimeError(f"curl: {r.stderr.decode(errors='replace').strip()[:200]}") from e
-        return r.stdout
+        with tempfile.TemporaryDirectory(prefix="os3-router-http-") as tmp:
+            output = os.path.join(tmp, "response")
+            command = [curl, "-sSL", "--max-time", str(timeout), "-A", "os3-router/" + __version__,
+                       "--output", output, "--write-out", "%{http_code}\n%{url_effective}"]
+            if method == "HEAD":
+                command.append("--head")
+            r = subprocess.run(command + [url], capture_output=True, timeout=timeout + 10)
+            if r.returncode:
+                raise RuntimeError(f"curl: {r.stderr.decode(errors='replace').strip()[:200]}") from e
+            status_text, final_url = r.stdout.decode(errors="replace").split("\n", 1)
+            status = int(status_text)
+            if status >= 400:
+                raise urllib.error.HTTPError(url, status, f"HTTP {status}", {}, None)
+            if method == "HEAD":
+                return b"", final_url.strip()
+            with open(output, "rb") as response_file:
+                return response_file.read(), final_url.strip()
+
+
+def _get(url, timeout=60):
+    return _request(url, timeout)[0]
 
 
 def latest():
@@ -44,12 +64,8 @@ def latest():
         # Unauthenticated GitHub API checks can exhaust the shared IP's hourly quota.
         # The public latest-release redirect is not subject to that API quota.
         url = f"https://github.com/{REPO}/releases/latest"
-        request = urllib.request.Request(url, headers={"User-Agent": "os3-router/" + __version__}, method="HEAD")
-        response = urllib.request.urlopen(request, timeout=20)
-        try:
-            final = urllib.parse.urlparse(response.geturl())
-        finally:
-            response.close()
+        _, final_url = _request(url, timeout=20, method="HEAD")
+        final = urllib.parse.urlparse(final_url)
         prefix = f"/{REPO}/releases/tag/"
         if final.scheme != "https" or final.netloc != "github.com" or not final.path.startswith(prefix):
             raise ValueError(f"GitHub latest release did not redirect to a tag: {final.geturl()}")

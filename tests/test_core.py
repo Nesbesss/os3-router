@@ -542,6 +542,14 @@ class ContentStreamTest(unittest.TestCase):
 
 
 class UpdaterCertTest(unittest.TestCase):
+    @staticmethod
+    def curl_reply(status, final_url, body=b""):
+        def run(command, **kwargs):
+            with open(command[command.index("--output") + 1], "wb") as output:
+                output.write(body)
+            return mock.Mock(returncode=0, stdout=f"{status}\n{final_url}".encode(), stderr=b"")
+        return run
+
     def test_rate_limited_api_uses_latest_release_redirect(self):
         import urllib.error
         from codex_os3 import updater
@@ -569,14 +577,42 @@ class UpdaterCertTest(unittest.TestCase):
         import urllib.error
         from codex_os3 import updater
         bad = urllib.error.URLError("[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed")
-        done = mock.Mock(returncode=0, stdout=b'{"tag_name": "v9.9.9"}')
+        api = f"https://api.github.com/repos/{updater.REPO}/releases/latest"
         with mock.patch.object(updater.urllib.request, "urlopen", side_effect=bad), \
                 mock.patch.object(updater.shutil, "which", return_value="/usr/bin/curl"), \
-                mock.patch.object(updater.subprocess, "run", return_value=done) as run:
+                mock.patch.object(updater.subprocess, "run", side_effect=self.curl_reply(
+                    200, api, b'{"tag_name": "v9.9.9"}')) as run:
             self.assertEqual(updater.latest(), "v9.9.9")
         self.assertEqual(run.call_args[0][0][0], "/usr/bin/curl")
         with mock.patch.object(updater.urllib.request, "urlopen", side_effect=urllib.error.URLError("timed out")):
             self.assertRaises(urllib.error.URLError, updater.latest)  # other errors are not retried
+
+    def test_curl_api_403_uses_release_redirect(self):
+        import urllib.error
+        from codex_os3 import updater
+        bad = urllib.error.URLError("[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed")
+        api = f"https://api.github.com/repos/{updater.REPO}/releases/latest"
+        response = mock.Mock()
+        response.geturl.return_value = "https://github.com/Nesbesss/os3-router/releases/tag/v0.5.0"
+        with mock.patch.object(updater.urllib.request, "urlopen", side_effect=[bad, response]) as opened, \
+                mock.patch.object(updater.shutil, "which", return_value="/usr/bin/curl"), \
+                mock.patch.object(updater.subprocess, "run", side_effect=self.curl_reply(403, api)):
+            self.assertEqual(updater.latest(), "v0.5.0")
+        self.assertEqual(opened.call_args.args[0].get_method(), "HEAD")
+        response.close.assert_called_once_with()
+
+    def test_redirect_recovers_from_certificate_error_with_curl(self):
+        import urllib.error
+        from codex_os3 import updater
+        limited = urllib.error.HTTPError("https://api.github.com/", 403, "rate limit exceeded", {}, None)
+        bad = urllib.error.URLError("[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed")
+        release = "https://github.com/Nesbesss/os3-router/releases/tag/v0.5.0"
+        with mock.patch.object(updater, "_get", side_effect=limited), \
+                mock.patch.object(updater.urllib.request, "urlopen", side_effect=bad), \
+                mock.patch.object(updater.shutil, "which", return_value="/usr/bin/curl"), \
+                mock.patch.object(updater.subprocess, "run", side_effect=self.curl_reply(200, release)) as run:
+            self.assertEqual(updater.latest(), "v0.5.0")
+        self.assertIn("--head", run.call_args.args[0])
 
 
 class AccountsTest(unittest.TestCase):
