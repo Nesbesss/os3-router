@@ -88,6 +88,9 @@ def _fn(name, desc, props=None, req=()):
 
 def _plain(err):
     e = str(err).lower()
+    if ("readonly database" in e or "sqlite error (code 8)" in e) and ("state_db" in e or "codex_rollout" in e):
+        return ("Codex cannot write its state database under ~/.codex. Check that this folder and its database "
+                "are writable by your Mac account, then retry Find the problem.")
     if "newer version" in e:
         return "Codex is too old for this model. Click Fix under “Check this machine” (or Get help)."
     if "not logged in" in e or "login" in e or "401" in e or "unauthorized" in e:
@@ -211,7 +214,7 @@ def diagnose(cfg, problem, step=""):
             except Exception as e:  # e.g. Codex itself is the broken part: try Claude Code
                 err = f"{type(e).__name__}: {e}"[:300]
         if not used:
-            return {"error": f"couldn't ask a model ({err}). The setup steps above show what the router detected."}
+            return {"error": f"couldn't ask a model ({_plain(err)}). The setup steps above show what the router detected."}
         out["actions"] = [dict(a, label=ACTIONS[a["id"]][0]) for a in out.get("actions", []) if a.get("id") in ACTIONS]
         out["model"] = used
         store.event("selffix", f"{problem[:100]} -> {out.get('summary', '')[:150]} ({used}, {time.time() - t:.0f}s)",

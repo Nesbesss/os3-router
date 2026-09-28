@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.6 (unreleased)
+- **Help explains a read-only Codex state database.** If Codex cannot write its state, Find the problem now points to the folder permissions to check instead of repeating the raw SQLite error.
+- **Setup separates a saved connected status from a running node.** When the saved status says connected but its process cannot be verified, Setup explains the mismatch without offering a restart.
+
 ## 0.5.5 (2026-09-28)
 - **Fix for "The request was rejected (HTTP 403)" in OS3's new *models and connections* screen.** rabbit's firewall blocks saving a connection whose endpoint is `http://localhost…` or `http://127.0.0.1…`. The router now tells you to use `http://127.1:11435/v1`: the same address, written in a way the firewall lets through. Already set up and working? Nothing to change. Getting the 403? Replace the endpoint with the new one and save again.
 
