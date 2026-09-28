@@ -210,6 +210,17 @@ class Watchdog(unittest.TestCase):
     def kinds(self, s):
         return [(f["kind"], f["action"]) for f in watchdog.rules(s)]
 
+    def test_silence_after_a_one_shot_housekeeping_call_is_normal(self):
+        """OS3 never follows up emit_facts / extract_file_signals / emit_merged_soul (96-100% of tasks end there):
+        the watchdog must not call that a dead tunnel or restart the agent (58% of tunnel_dead on a real Mac)."""
+        for tools in (["emit_facts"], ["extract_file_signals"], ["emit_merged_soul"], ["emit_facts", "report_correction"]):
+            s = self.snap(last_response={"ago_s": 700, "result": "tool_call", "calls": tools, "task": "t"},
+                          last_request_ago_s=705, agent_aborted_task_since_response=True)
+            self.assertEqual([k for k, _ in self.kinds(s)], [], tools)
+        s = self.snap(last_response={"ago_s": 700, "result": "tool_call", "calls": ["emit_facts", "shell"], "task": "t"},
+                      last_request_ago_s=705)
+        self.assertIn(("tunnel_dead", "restart_agent"), self.kinds(s))  # a real tool mixed in: still watched
+
     def test_dead_tunnel_after_executed_calls(self):
         self.assertIn(("tunnel_dead", "restart_agent"), self.kinds(self.snap()))
 
@@ -357,6 +368,30 @@ class LimitWarningNameTest(unittest.TestCase):
                            for b in ("codex", "codex:2", "claude")}}
         msgs = [f["msg"] for f in watchdog.rules(snap)]
         self.assertEqual(sorted(m.split(" 5-hour")[0] for m in msgs), ["ChatGPT (Codex)", "ChatGPT account 2", "Claude"])
+
+
+class CodexUpdatePauseTest(unittest.TestCase):
+    def test_failed_codex_update_is_not_retried_for_hours(self):
+        from codex_os3 import selffix, updater
+        store.kv_set("codex_update_failed", 0)
+        with mock.patch.object(selffix, "update_codex", return_value=(False, "npm broke")) as up, \
+                mock.patch.object(updater.store, "event"):
+            updater._update_codex({})
+            updater._update_codex({})
+            self.assertEqual(up.call_count, 1)
+            store.kv_set("codex_update_failed", time.time() - 7 * 3600)
+            updater._update_codex({})
+            self.assertEqual(up.call_count, 2)
+        store.kv_set("codex_update_failed", 0)
+
+    def test_npm_runs_from_a_folder_that_exists(self):
+        from codex_os3 import config, selffix
+        with mock.patch.object(selffix.subprocess, "run", return_value=mock.Mock(returncode=0, stdout="", stderr="")) as run, \
+                mock.patch.object(selffix.ui_api, "codex_info", return_value={"version": "1"}), \
+                mock.patch.object(selffix.shutil, "which", return_value="/usr/bin/npm"), \
+                mock.patch.object(selffix.os.path, "isfile", return_value=True):
+            selffix.update_codex({"codex_bin": "/x/codex"})
+        self.assertEqual(run.call_args.kwargs["cwd"], config.HOME)
 
 
 class AppServerStartTest(unittest.TestCase):
