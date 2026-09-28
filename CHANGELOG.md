@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.5.6 (2026-09-28)
+## 0.5.7 (2026-09-28)
 - **Claude models show up again on Macs.** The router only looked for Claude Code in the service's own PATH, which doesn't include `~/.local/bin`, where Claude Code's installer puts it, so many people only saw GPT models under Models. It now also finds Claude Code there (and in its other usual folders), even when it was installed after the router.
 - **The app no longer gets stuck on "localhost refused to connect" (Windows).** When switching to a new version failed on Windows, the router could end up with nothing listening while it looked like it was running. It now starts a fresh copy instead, and it checks itself: a router that stops answering is restarted within about a minute.
 
