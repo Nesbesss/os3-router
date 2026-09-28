@@ -8,7 +8,7 @@ from .platform_util import pid_alive
 J = "application/json"
 EDITABLE = {"model", "effort", "bind", "port", "captures", "retention_days", "jev_key",
             "webhook", "watchdog", "restart_agent", "auto_update", "no_sleep", "fallback", "share_reports",
-            "engine", "stream_chat", "compact_tokens", "codex_images", "max_codex", "max_images", "role_routing", "roles"}
+            "claude_bin", "engine", "stream_chat", "compact_tokens", "codex_images", "max_codex", "max_images", "role_routing", "roles"}
 
 
 def clean_roles(value):
@@ -296,6 +296,10 @@ def handle(method, path, data, q, cfg):
                 return 400, {"error": "no_sleep must be true or false"}, J
             if upd["no_sleep"] and sys.platform not in sleep_control.SUPPORTED:
                 return 400, {"error": "idle sleep prevention is not supported on this platform"}, J
+        if "claude_bin" in upd:  # the Models page lets people point at Claude Code when it isn't found by itself
+            upd["claude_bin"] = os.path.expanduser(str(upd["claude_bin"]).strip())
+            if upd["claude_bin"] and not os.path.isfile(upd["claude_bin"]):
+                return 400, {"error": "no such file: " + upd["claude_bin"]}, J
         if "roles" in upd:
             upd["roles"] = dict(cfg.get("roles") or {}, **clean_roles(upd["roles"]))
         if "fallback" in upd:  # empty model = no fallback for that role
