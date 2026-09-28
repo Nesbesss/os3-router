@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.5.6 (unreleased)
+## 0.5.6 (2026-09-28)
 - **Help explains a read-only Codex state database.** If Codex cannot write its state, Find the problem now points to the folder permissions to check instead of repeating the raw SQLite error.
 - **Setup separates a saved connected status from a running node.** When the saved status says connected but its process cannot be verified, Setup explains the mismatch without offering a restart.
 
