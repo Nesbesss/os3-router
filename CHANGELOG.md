@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.5.5 (2026-09-28)
+- **Fix for "The request was rejected (HTTP 403)" in OS3's new *models and connections* screen.** rabbit's firewall blocks saving a connection whose endpoint is `http://localhost…` or `http://127.0.0.1…`. The router now tells you to use `http://127.1:11435/v1`: the same address, written in a way the firewall lets through. Already set up and working? Nothing to change. Getting the 403? Replace the endpoint with the new one and save again.
+
 ## 0.5.4 (2026-09-28)
 - **The installer works on Linux machines without systemd or cron** (containers, WSL, minimal installs): the router starts right away and again at every login, instead of stopping with "could not write your crontab".
 - **Never two routers at once.** A keep-alive can no longer start a second copy next to a running router (on cron machines one could be added every 2 minutes).

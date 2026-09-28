@@ -74,7 +74,7 @@ def main(argv):
         print(f"""
      In OS3: Settings → API keys → add a provider "local" with:
        device          this machine
-       endpoint        http://localhost:{cfg['port']}/v1
+       endpoint        http://127.1:{cfg['port']}/v1   (not localhost: rabbit's firewall blocks that)
        model id        {cfg['model']}
        api key         {cfg['api_key']}
        context window  200000   (advanced)

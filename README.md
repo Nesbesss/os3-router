@@ -58,7 +58,7 @@ with screenshots, checks each step live, and has a **Test my setup** button. In 
 | field | value |
 |---|---|
 | device | **this machine** (the one you installed on) |
-| endpoint | `http://localhost:11435/v1` |
+| endpoint | `http://127.1:11435/v1` (the same as 127.0.0.1; rabbit's firewall rejects `http://localhost` when saving, see Troubleshooting) |
 | model id | `gpt-6-luna` (see [Models](#models)) |
 | api key | shown by the installer and on the setup page |
 | context window (advanced) | `200000` |
@@ -256,6 +256,7 @@ The router does not load your `~/.claude/settings.json`; it uses the login you m
 
 | you see | cause and fix |
 |---|---|
+| OS3 *models and connections*: *"The request was rejected (HTTP 403)"* when saving or testing | rabbit's firewall blocks connections whose endpoint is `http://localhost…` or `http://127.0.0.1…`. Use `http://127.1:11435/v1` instead (the same address, written differently) |
 | the installer stops with *"The install stopped during: …"* | run the same command again (safe: it continues where it can). Still stuck: share `~/.codex-os3/install.log` in the Discord or an issue |
 | Accounts shows *Signed out* | OpenAI ended that login (for example after a plan change): click **Sign in again** and enter the code. The router uses your other accounts meanwhile |
 | OS3: *"The device is offline or the local endpoint is unreachable"* when saving | the router must run on the **device you selected** in OS3, and the endpoint must be `http://localhost:11435/v1`. Check `os3-router doctor` on that machine. |
