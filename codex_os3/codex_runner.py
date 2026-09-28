@@ -33,6 +33,10 @@ class UsageLimit(RuntimeError):
         self.plan = plan  # the model is not part of the user's plan at all
 
 
+class SignedOut(UsageLimit):
+    """OpenAI signed this Codex login out (plan change, password reset): it needs a new sign-in."""
+
+
 def slots(n):
     global _slots
     with _slots_lock:
@@ -201,6 +205,9 @@ def run(cfg, prompt, model, schema=None, alive=lambda: True, images=(), resume=N
             store.kv_set("codex_outdated", time.time())
         if PLAN_RE.search(msg):
             raise UsageLimit(msg, plan=True)
+        if accounts.AUTH_RE.search(msg):
+            accounts.mark_signed_out(account, msg)
+            raise SignedOut(msg)
         if "usage limit" in msg.lower():
             m = RESET_RE.search(msg)
             raise UsageLimit(msg, m.group(1).strip() if m else "")

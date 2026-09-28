@@ -373,7 +373,7 @@ const ROLE = {chat: ["Small", "The chat you talk to"], worker: ["Standard", "Wor
 const modelOf = (m) => (m || "").replace(/-(minimal|low|medium|high|xhigh|max|ultra)$/, "");
 const effortOf = (m) => (m || "").match(/-(minimal|low|medium|high|xhigh|max|ultra)$/)?.[1] || "";
 const ICON = {check: '<path d="M6 12.5l4 4 8-9"/>', warn: '<path d="M12 7v6M12 17v.01"/>', dots: '<path d="M7 12h.01M12 12h.01M17 12h.01"/>'};
-const EV = {invalid_calls: "The model made a broken tool call (repaired)", fix_failed: "Couldn't repair a tool call", retry: "The model hung and was retried",
+const EV = {signed_out: "A Codex account was signed out by OpenAI", plan_model: "A model isn't in your plan: switched model", invalid_calls: "The model made a broken tool call (repaired)", fix_failed: "Couldn't repair a tool call", retry: "The model hung and was retried",
   usage_limit: "Usage limit reached", error: "A request failed", tunnel_dead: "The OS3 node lost its connection (restarted)", agent_down: "The OS3 node was not running (restarted)",
   restart_agent: "Restarted the OS3 node", limit_high: "A limit is above 90%", fallback: "Switched to the fallback model", update_failed: "An update failed",
   codex_unstable: "Model calls were unstable", client_gone: "OS3 cancelled a request", false_unavailable: "The model wrongly said a tool was missing (retried)"};
@@ -494,13 +494,15 @@ VIEWS.models = {static: true, async draw() {
 let AV = "all";
 VIEWS.accounts = {static: true, async draw() {
   const A = await api("accounts");
-  const state = (a) => a.limited ? ["bad", "At its limit"] : a.nearly_out ? ["warn", "Almost out"] : a.active ? ["good", "In use"] : ["", "Standby"];
-  const card = (a) => { const [cls, txt] = state(a), L = a.limits;
+  const state = (a) => a.signed_out ? ["bad", "Signed out"] : a.limited ? ["bad", "At its limit"] : a.nearly_out ? ["warn", "Almost out"] : a.active ? ["good", "In use"] : ["", "Standby"];
+  const card = (a, i) => { const [cls, txt] = state(a), L = a.limits;
     return `<div class="card"><div class="row" style="justify-content:space-between"><h2 style="margin:0">${a.id === "main" ? "Main account" : "Account " + esc(a.id)}</h2><span class="chip acct ${cls}">${txt}</span></div>
-      <p class="muted" style="margin:6px 0 12px">${esc(a.email || "ChatGPT account")}${a.plan ? " · " + esc(a.plan) : ""}</p>
+      <p class="muted" style="margin:6px 0 12px">${i === 0 && A.accounts.length > 1 ? "<b>Used first</b> · " : ""}${esc(a.email || "ChatGPT account")}${a.plan ? " · " + esc(a.plan) : ""}</p>
+      ${a.signed_out ? `<div class="alert bad" style="margin:0 0 12px">OpenAI signed this account out (for example after a plan change). The router skips it until you sign in again.</div>` : ""}
       ${L ? `<div class="rings">${rings(L)}</div>` : `<p class="muted">Not used yet: its limits show up after its first request.</p>`}
-      ${a.id !== "main" ? `<div class="row" style="margin-top:12px"><button class="btn" data-rm="${esc(a.id)}">Remove</button></div>` : ""}</div>`; };
-  $("#view").innerHTML = `<h1>Accounts</h1><p class="sub">Add more ChatGPT accounts. The router uses one at a time and moves to the next when it's at ${A.switch_at}% or at its limit; once the first has room again it goes back. A conversation stays on its account as long as it can.</p>
+      <div class="row" style="margin-top:12px">${a.signed_out ? `<button class="btn primary" data-signin="${esc(a.id)}">Sign in again</button>` : ""}${i > 0 ? `<button class="btn" data-first="${esc(a.id)}">Use first</button>` : ""}${a.id !== "main" ? `<button class="btn" data-rm="${esc(a.id)}">Remove</button>` : ""}</div>
+      <div data-login="${esc(a.id)}"></div></div>`; };
+  $("#view").innerHTML = `<h1>Accounts</h1><p class="sub">Add more ChatGPT accounts. The router uses one at a time, starting with the one used first, and moves to the next when it's at ${A.switch_at}% or at its limit; once the first has room again it goes back. A conversation stays on its account as long as it can.</p>
     <div class="grid">${A.accounts.map(card).join("")}</div>
     <div class="card" id="addcard" style="margin-top:18px"><h2>Add a ChatGPT account</h2>
       ${A.terms_accepted ? "" : `<div class="alert warn" style="margin:0 0 12px">${esc(A.terms)}</div><label class="check"><input type="checkbox" id="terms"> I understand and accept this</label>`}
@@ -510,19 +512,26 @@ VIEWS.accounts = {static: true, async draw() {
   document.querySelectorAll("[data-rm]").forEach(b => b.onclick = async () => {
     if (!confirm("Remove account " + b.dataset.rm + "? The router stops using it; you can add it again later.")) return;
     await post("accounts/remove", {id: b.dataset.rm}); toast("Account removed"); VIEWS.accounts.draw(); });
-  $("#addacct").onclick = async () => {
-    $("#addacct").disabled = true;
-    let r; try { r = await post("accounts/add", {accept_terms: !!(t && t.checked)}); } catch (e) { $("#login").innerHTML = `<div class="alert bad">${esc(e.message)}</div>`; $("#addacct").disabled = false; return; }
-    $("#login").innerHTML = `<div class="alert good" style="margin-top:14px"><b>1.</b> Open <a class="link" href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.url)}</a><br>
-      <b>2.</b> Sign in with the <b>other</b> ChatGPT account and enter this code:<div class="bignum" style="letter-spacing:.12em;margin:8px 0">${esc(r.code)}</div>
-      <span class="muted" id="loginst">Waiting for you to sign in… (up to 15 minutes)</span></div>`;
+  document.querySelectorAll("[data-first]").forEach(b => b.onclick = async () => {
+    await post("accounts/first", {id: b.dataset.first}); toast("The router now uses this account first"); VIEWS.accounts.draw(); });
+  // device-code sign-in: a new account (add) or one OpenAI signed out (signin)
+  const signin = async (btn, box, path, body, which, done) => {
+    btn.disabled = true;
+    let r; try { r = await post(path, body); } catch (e) { box.innerHTML = `<div class="alert bad">${esc(e.message)}</div>`; btn.disabled = false; return; }
+    box.innerHTML = `<div class="alert good" style="margin-top:14px"><b>1.</b> Open <a class="link" href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.url)}</a><br>
+      <b>2.</b> Sign in with ${which} and enter this code:<div class="bignum" style="letter-spacing:.12em;margin:8px 0">${esc(r.code)}</div>
+      <span class="muted">Waiting for you to sign in… (up to 15 minutes)</span></div>`;
     const poll = async () => { if (VIEW !== "accounts") return;
       const s = await api("accounts/login?login=" + encodeURIComponent(r.login)).catch(() => ({status: "waiting"}));
-      if (s.status === "done") { toast("Account " + s.id + " added"); VIEWS.accounts.draw(); }
-      else if (s.status === "error" || s.status === "unknown") { $("#loginst").textContent = "Didn't work: " + (s.error || "the router restarted, try again"); $("#addacct").disabled = false; }
+      if (s.status === "done") { toast(done(s)); VIEWS.accounts.draw(); }
+      else if (s.status === "error" || s.status === "unknown") { box.querySelector(".muted").textContent = "Didn't work: " + (s.error || "the router restarted, try again"); btn.disabled = false; }
       else setTimeout(poll, 2500); };
     setTimeout(poll, 2500);
   };
+  document.querySelectorAll("[data-signin]").forEach(b => b.onclick = () => signin(b, document.querySelector(`[data-login="${b.dataset.signin}"]`),
+    "accounts/signin", {id: b.dataset.signin}, "the <b>same</b> ChatGPT account", () => "Signed in again"));
+  $("#addacct").onclick = () => signin($("#addacct"), $("#login"), "accounts/add", {accept_terms: !!(t && t.checked)},
+    "the <b>other</b> ChatGPT account", (s) => "Account " + s.id + " added");
 }};
 
 VIEWS.activity = {async draw() {

@@ -6,7 +6,7 @@ corrections, repairs and sessions work unchanged. Off by default until measured 
 import json, os, queue, subprocess, tempfile, threading, time
 
 from . import accounts, platform_util, sessions, store
-from .codex_runner import (DISABLED, PLAN_RE, RESET_RE, WORKDIR, ClientGone, CodexHung, UsageLimit, idle_limit,
+from .codex_runner import (DISABLED, PLAN_RE, RESET_RE, WORKDIR, ClientGone, CodexHung, SignedOut, UsageLimit, idle_limit,
                            known_features, slots, split_model)
 
 _EOF = {"method": "__eof__"}
@@ -86,8 +86,10 @@ class Server:
             try:
                 self.limits = self.request("account/rateLimits/read", {}, 20).get("rateLimits")
                 self.limits_ts = time.time()
-            except RuntimeError:
-                pass
+                accounts.note_plan(self.account, (self.limits or {}).get("planType"))
+            except RuntimeError as e:
+                if accounts.AUTH_RE.search(str(e)):
+                    accounts.mark_signed_out(self.account, str(e))
         return self.limits
 
     def stop(self):
@@ -233,6 +235,9 @@ def run(cfg, prompt, model, schema=None, alive=lambda: True, images=(), resume=N
                 store.kv_set("codex_outdated", time.time())
             if PLAN_RE.search(msg):
                 raise UsageLimit(msg, plan=True)
+            if accounts.AUTH_RE.search(msg):
+                accounts.mark_signed_out(account, msg)
+                raise SignedOut(msg)
             if "usage limit" in msg.lower():
                 r = RESET_RE.search(msg)
                 raise UsageLimit(msg, r.group(1).strip() if r else "")

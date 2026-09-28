@@ -226,6 +226,11 @@ def handle(method, path, data, q, cfg):
         try:
             if method == "POST" and path == "accounts/add":
                 return 200, accounts.start_login(cfg, bool(data.get("accept_terms"))), J
+            if method == "POST" and path == "accounts/signin":  # an existing account signed out by OpenAI
+                return 200, accounts.start_login(cfg, again=str(data.get("id", ""))), J
+            if method == "POST" and path == "accounts/first":
+                accounts.use_first(str(data.get("id", "")))
+                return 200, {"ok": True}, J
             if method == "POST" and path == "accounts/remove":
                 accounts.remove(str(data.get("id", "")))
                 return 200, {"ok": True}, J

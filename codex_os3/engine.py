@@ -8,7 +8,7 @@ main codex call (resumed session when possible, one fresh retry on failure/hang)
 import json, os, time, uuid
 
 from . import accounts, appserver, claude_runner, codex_runner, config, notify, prompt as P, repair, roles, sessions, store
-from .codex_runner import ClientGone, CodexHung, UsageLimit
+from .codex_runner import ClientGone, CodexHung, SignedOut, UsageLimit
 
 
 class EngineError(RuntimeError):
@@ -216,19 +216,23 @@ class Turn:
         if self.backend != "codex" or err.plan:
             return None
         while True:
-            accounts.mark_limited(self.account)
+            if not isinstance(err, SignedOut):  # (a signed-out one is already marked by the runner)
+                accounts.mark_limited(self.account)
             nxt = accounts.pick()
             if not nxt or nxt == self.account:
                 return None
-            msg = f"Codex account {self.account} reached its usage limit: switched to account {nxt}"
+            why = "is signed out" if isinstance(err, SignedOut) else "reached its usage limit"
+            msg = f"Codex account {self.account} {why}: switched to account {nxt}"
             self.ev("account_switch", msg, "warn")
             notify.desktop(msg, key="account:" + nxt)
             self.account = nxt
             images, prompt = self.build(full=True)
             try:
                 return self.codex(prompt, images.files, keep=self.tracked)
-            except UsageLimit:
-                continue
+            except UsageLimit as e:
+                if e.plan:
+                    raise
+                err = e
 
     def plan_model(self, refused=False):
         """A model the plan of this Codex account doesn't include (Free has only the small ones) -> the
@@ -309,7 +313,8 @@ class Turn:
                     # retry this same request on the fallback; later requests go there directly for 15 min
                     name = "Claude" if self.backend == "claude" else "Codex"
                     store.kv_set("limited:" + self.backend, time.time() + 900)
-                    msg = f"{name} usage limit reached: {roles.LABEL.get(self.role, self.role)} switched to {fb}"
+                    why = "is signed out" if isinstance(e, SignedOut) else "usage limit reached"
+                    msg = f"{name} {why}: {roles.LABEL.get(self.role, self.role)} switched to {fb}"
                     self.ev("fallback", msg + (f" (resets at {e.resets})" if e.resets else ""), "warn")
                     notify.desktop(msg, key="fallback:" + self.backend)
                     self.model, self.backend, self.fell_back = fb, roles.backend(fb), True
@@ -335,6 +340,9 @@ class Turn:
             when = f" — resets at {e.resets}" if e.resets else ""
             self.ev("usage_limit", str(e)[:200], "error")
             name = "Claude" if self.backend == "claude" else "Codex"
+            if isinstance(e, SignedOut):
+                return {"role": "assistant", "content": "⚠️ Codex is signed out (OpenAI ended the login, e.g. after a "
+                        "plan change). Open the OS3 Router app → Accounts → Sign in again. Nothing was done."}, "stop"
             if e.plan:
                 return {"role": "assistant", "content": f"⚠️ {self.model.rsplit('-', 1)[0]} is not included in your "
                         f"{name} plan: {str(e)[:200]} Pick another model in the router dashboard "

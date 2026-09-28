@@ -628,10 +628,33 @@ class AccountsTest(unittest.TestCase):
         os.makedirs(os.path.join(accounts.root(), "2", "sessions", "2026"), exist_ok=True)
         open(os.path.join(accounts.root(), "2", "auth.json"), "w").close()
         store._w("DELETE FROM limits")
-        store._w("DELETE FROM kv WHERE k LIKE 'limited:%'")
+        store._w("DELETE FROM kv WHERE k LIKE 'limited:%' OR k LIKE 'signed_out:%' OR k LIKE 'plan:%' OR k = 'account_order'")
 
     def tearDown(self):
         self.env.stop()
+        store._w("DELETE FROM kv WHERE k LIKE 'signed_out:%' OR k LIKE 'plan:%' OR k = 'account_order'")
+
+    def test_account_used_first(self):
+        a, now = self.a, time.time()
+        a.use_first("2")                                   # e.g. main dropped to a plan with only a monthly window
+        self.assertEqual((a.all_accounts(), a.pick()), (["2", "main"], "2"))
+        store.add_limits({"primary": {"used_percent": 96, "resets_at": now + 3600}}, "codex:2")
+        self.assertEqual(a.pick(), "main")                 # its 5 hours are nearly used: the leftover account
+        store.add_limits({"primary": {"used_percent": 3, "resets_at": now + 18000}}, "codex:2")
+        self.assertEqual(a.pick(), "2")                    # reset: back to the first one
+        with self.assertRaises(ValueError):
+            a.use_first("9")
+
+    def test_signed_out_account_is_skipped_until_signed_in(self):
+        a = self.a
+        a.mark_signed_out("main", "401 Unauthorized: Your authentication token has been invalidated.")
+        self.assertEqual(a.pick(), "2")
+        self.assertTrue(next(x for x in a.overview({})["accounts"] if x["id"] == "main")["signed_out"])
+        a.note_plan("main", "free")                         # a good answer from OpenAI: in again, with the live plan
+        self.assertEqual(a.pick(), "main")
+        self.assertEqual(next(x for x in a.overview({})["accounts"] if x["id"] == "main")["plan"], "free")
+        self.assertTrue(a.AUTH_RE.search('{"code": "token_invalidated"}'))
+        self.assertFalse(a.AUTH_RE.search("You've hit your usage limit."))
 
     def test_pick_and_switch(self):
         a, now = self.a, time.time()
