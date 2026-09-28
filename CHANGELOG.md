@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.4 (2026-09-28)
+- **The installer works on Linux machines without systemd or cron** (containers, WSL, minimal installs): the router starts right away and again at every login, instead of stopping with "could not write your crontab".
+- **Never two routers at once.** A keep-alive can no longer start a second copy next to a running router (on cron machines one could be added every 2 minutes).
+
 ## 0.5.3 (2026-09-28)
 - **Pick which account is used first.** Accounts has a *Use first* button: put your account with a 5-hour window first and keep another as the leftover. The router moves to the next account when the first is almost out, and goes back once it resets.
 - **Signed-out accounts are handled.** When OpenAI ends a login (for example after a plan change), the account shows *Signed out* with a *Sign in again* button (main too), requests move to your other accounts, and you get a notification instead of errors.

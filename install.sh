@@ -52,6 +52,18 @@ run() {
     "$@" >>"$LOG" 2>&1
   fi
 }
+# keeps a script running without systemd: cron (at boot + every 2 min) when there is one; otherwise
+# (containers, WSL, minimal installs) it runs at every login from ~/.profile. -> 1 without cron
+autostart() {
+  if command -v crontab >/dev/null 2>&1 && { crontab -l 2>/dev/null | grep -v "codex-os3-keepalive" || true
+      echo "@reboot $1 # codex-os3-keepalive"; echo "*/2 * * * * $1 # codex-os3-keepalive"; } | crontab - 2>/dev/null; then
+    return 0
+  fi
+  local prof="$HOME/.profile" rest
+  rest="$(grep -v "# codex-os3-keepalive" "$prof" 2>/dev/null || true)"
+  printf '%s\n%s\n' "$rest" "[ -x \"$1\" ] && \"$1\" >/dev/null 2>&1 # codex-os3-keepalive" > "$prof"
+  return 1
+}
 tty_in() { if ( : </dev/tty ) 2>/dev/null; then "$@" </dev/tty; else "$@"; fi; }
 
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
@@ -77,6 +89,7 @@ if [ "$UNINSTALL" = 1 ]; then
     rm -f "$UNIT" "$KUNIT"; systemctl --user daemon-reload 2>/dev/null || true
     pkill -f -- "-m codex_os3 keepalive" 2>/dev/null || true
     { crontab -l 2>/dev/null | grep -v "codex-os3-keepalive" || true; } | crontab - 2>/dev/null || true
+    [ -f "$HOME/.profile" ] && { grep -v "# codex-os3-keepalive" "$HOME/.profile" > "$HOME/.profile.os3" || true; cat "$HOME/.profile.os3" > "$HOME/.profile"; rm -f "$HOME/.profile.os3"; }
     pkill -f -- "-m codex_os3 (serve|worker)" 2>/dev/null || true
   fi
   rm -rf "$APP_DIR"
@@ -246,10 +259,17 @@ PLIST
     systemctl --user restart codex-os3-keepalive
     loginctl enable-linger "$USER" >/dev/null 2>&1 || warn "could not enable lingering (sudo loginctl enable-linger $USER)"
   else
-    KEEP="cd $APP_DIR && pgrep -f -- '-m codex_os3 keepalive' >/dev/null || CODEX_OS3_HOME=$HOME_DIR nohup $PY -m codex_os3 keepalive >> $HOME_DIR/keepalive.log 2>&1 &"
-    { crontab -l 2>/dev/null | grep -v "codex-os3-keepalive" || true
-      echo "*/2 * * * * $KEEP # codex-os3-keepalive"; } | crontab - || die "could not write your crontab"
-    sh -c "$KEEP"
+    KEEP="$HOME_DIR/keepalive-node.sh"
+    cat > "$KEEP" <<KEEP
+#!/bin/sh
+# codex-os3-keepalive (a pid file, not pgrep: minimal systems have no procps)
+[ -f "$HOME_DIR/keepalive.pid" ] && kill -0 "\$(cat "$HOME_DIR/keepalive.pid")" 2>/dev/null && exit 0
+cd "$APP_DIR" && CODEX_OS3_HOME="$HOME_DIR" nohup "$PY" -m codex_os3 keepalive >> "$HOME_DIR/keepalive.log" 2>&1 &
+echo \$! > "$HOME_DIR/keepalive.pid"
+KEEP
+    chmod +x "$KEEP"
+    autostart "$KEEP" || warn "no systemd or cron here: it starts at each login (~/.profile); for start at boot install cron"
+    "$KEEP" 3>&-  # (fd 3 is the installer's terminal: a background process must not hold it)
   fi
   ok "keep-alive running: it restarts this machine's rabbit-agent when it stops or stays disconnected (e.g. after sleep)"
   note "it updates itself; remove it with: bash install.sh --uninstall"
@@ -347,15 +367,17 @@ UNIT
     cat > "$KEEP" <<KEEP
 #!/bin/sh
 # codex-os3-keepalive
+cd "$APP_DIR" || exit 1
 "$PY" -m codex_os3 status 2>/dev/null | grep -q "service: running" && exit 0
-cd "$APP_DIR" && PATH="$SVC_PATH" CODEX_OS3_HOME="$HOME_DIR" nohup "$PY" -m codex_os3 serve >> "$HOME_DIR/service.log" 2>&1 &
+PATH="$SVC_PATH" CODEX_OS3_HOME="$HOME_DIR" nohup "$PY" -m codex_os3 serve >> "$HOME_DIR/service.log" 2>&1 &
 KEEP
     chmod +x "$KEEP"
-    { crontab -l 2>/dev/null | grep -v "codex-os3-keepalive" || true  # no crontab yet: grep/crontab fail
-      echo "@reboot $KEEP # codex-os3-keepalive"; echo "*/2 * * * * $KEEP # codex-os3-keepalive"; } | crontab - \
-      || die "could not write your crontab"
-    [ "$RUNNING" = 1 ] && "$PY" -m codex_os3 reload >/dev/null || "$KEEP"
-    ok "no systemd user session: using cron (@reboot + every 2 min) to keep it running"
+    if autostart "$KEEP"; then ok "no systemd user session: cron keeps it running (at boot + every 2 min)"
+    else
+      warn "no systemd or cron here: the router starts now and at every login (~/.profile)"
+      note "to have it start at boot as well, install cron (Debian/Ubuntu: sudo apt install cron) and re-run"
+    fi
+    [ "$RUNNING" = 1 ] && "$PY" -m codex_os3 reload >/dev/null || "$KEEP" 3>&-
   fi
 fi
 
@@ -410,7 +432,7 @@ Categories=Utility;Network;
 StartupWMClass=os3-router
 DESKTOP
   ok "app menu: OS3 Router"
-  [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && (nohup sh "$APP_DIR/app/linux/os3-router-app" setup >/dev/null 2>&1 &)
+  [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && (nohup sh "$APP_DIR/app/linux/os3-router-app" setup >/dev/null 2>&1 3>&- &)
 elif [ "$NO_APP" = 1 ]; then open "http://localhost:$PORT/app#setup" 2>/dev/null || true
 fi  # macOS: the app installed above opens on the setup wizard by itself
 "$PY" -m codex_os3 setup-info
