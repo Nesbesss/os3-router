@@ -542,6 +542,29 @@ class ContentStreamTest(unittest.TestCase):
 
 
 class UpdaterCertTest(unittest.TestCase):
+    def test_rate_limited_api_uses_latest_release_redirect(self):
+        import urllib.error
+        from codex_os3 import updater
+        limited = urllib.error.HTTPError("https://api.github.com/", 403, "rate limit exceeded", {}, None)
+        response = mock.Mock()
+        response.geturl.return_value = "https://github.com/Nesbesss/os3-router/releases/tag/v0.5.0"
+        with mock.patch.object(updater, "_get", side_effect=limited), \
+                mock.patch.object(updater.urllib.request, "urlopen", return_value=response) as open_url:
+            self.assertEqual(updater.latest(), "v0.5.0")
+        self.assertEqual(open_url.call_args.args[0].get_method(), "HEAD")
+        response.close.assert_called_once_with()
+
+    def test_rate_limit_fallback_rejects_unexpected_redirect(self):
+        import urllib.error
+        from codex_os3 import updater
+        limited = urllib.error.HTTPError("https://api.github.com/", 403, "rate limit exceeded", {}, None)
+        response = mock.Mock()
+        response.geturl.return_value = "https://github.com/Nesbesss/os3-router/releases"
+        with mock.patch.object(updater, "_get", side_effect=limited), \
+                mock.patch.object(updater.urllib.request, "urlopen", return_value=response):
+            with self.assertRaisesRegex(ValueError, "did not redirect to a tag"):
+                updater.latest()
+
     def test_falls_back_to_curl_on_certificate_errors(self):
         import urllib.error
         from codex_os3 import updater

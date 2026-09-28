@@ -2,7 +2,7 @@
 release; a newer one is downloaded, its own offline test suite must pass, then its files are
 copied over the install (previous version kept in app.prev) and the service reloads without
 downtime. Only for installs made by the installer (~/.codex-os3/app); off with auto_update=false."""
-import io, json, os, plistlib, shutil, subprocess, sys, tarfile, tempfile, time, urllib.error, urllib.request
+import io, json, os, plistlib, shutil, subprocess, sys, tarfile, tempfile, time, urllib.error, urllib.parse, urllib.request
 
 from . import __version__, config, store
 
@@ -36,7 +36,27 @@ def _get(url, timeout=60):
 
 
 def latest():
-    return json.loads(_get(f"https://api.github.com/repos/{REPO}/releases/latest", 20))["tag_name"]
+    try:
+        return json.loads(_get(f"https://api.github.com/repos/{REPO}/releases/latest", 20))["tag_name"]
+    except urllib.error.HTTPError as e:
+        if e.code != 403:
+            raise
+        # Unauthenticated GitHub API checks can exhaust the shared IP's hourly quota.
+        # The public latest-release redirect is not subject to that API quota.
+        url = f"https://github.com/{REPO}/releases/latest"
+        request = urllib.request.Request(url, headers={"User-Agent": "os3-router/" + __version__}, method="HEAD")
+        response = urllib.request.urlopen(request, timeout=20)
+        try:
+            final = urllib.parse.urlparse(response.geturl())
+        finally:
+            response.close()
+        prefix = f"/{REPO}/releases/tag/"
+        if final.scheme != "https" or final.netloc != "github.com" or not final.path.startswith(prefix):
+            raise ValueError(f"GitHub latest release did not redirect to a tag: {final.geturl()}")
+        tag = urllib.parse.unquote(final.path[len(prefix):])
+        if not tag or "/" in tag or ver(tag) == (0,):
+            raise ValueError(f"GitHub latest release returned an invalid tag: {tag}")
+        return tag
 
 
 def managed():
