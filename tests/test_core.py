@@ -879,7 +879,7 @@ class ClaudeFoundTest(unittest.TestCase):
                     mock.patch.object(roles, "CLAUDE_DIRS", ("~/.local/bin",)):
                 self.assertEqual(roles.claude_path({}), cli)
                 self.assertTrue(roles.claude_installed({}))
-                self.assertIsNone(roles.claude_path({"claude_bin": os.path.join(home, "gone")}) and None)
+                self.assertEqual(roles.claude_path({"claude_bin": os.path.join(home, "gone")}), cli)  # stale saved path
             with mock.patch.dict(os.environ, {"HOME": home, "USERPROFILE": home, "PATH": ""}), \
                     mock.patch.object(roles, "CLAUDE_DIRS", ()):
                 self.assertFalse(roles.claude_installed({}))
