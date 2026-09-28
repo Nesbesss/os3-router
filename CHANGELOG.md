@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.9 (2026-09-28)
+- **Claude models no longer go missing when Claude Code is installed in an unusual place.** If the router can't find Claude Code in its usual folders, it now asks your own shell where `claude` is. That covers installs through nvm, fnm, volta or asdf, and a `claude` that is only an alias.
+- **You can point the router at Claude Code yourself.** When no Claude models are listed, **Models** now shows a box: run `which claude` in Terminal, paste the path, and the Claude models appear right away.
+- **A new Codex install, or a second ChatGPT account, no longer hides the Claude models.** Until Codex had run once, the model list skipped Claude.
+
 ## 0.5.8 (2026-09-28)
 - **Claude Sonnet 5.5.** Anthropic's new Sonnet (released today) is in the model list for every role, through your Claude subscription with Claude Code: faster than Sonnet 5 and lighter on your limits. Pick it under **Models**.
 

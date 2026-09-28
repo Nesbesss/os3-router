@@ -867,6 +867,38 @@ class SecondRouterTest(unittest.TestCase):
 
 
 class ClaudeFoundTest(unittest.TestCase):
+    def test_found_by_login_shell(self):
+        """An nvm/alias install is only known to the user's shell: ask it when the usual folders miss."""
+        from codex_os3 import roles
+        with tempfile.TemporaryDirectory() as home:
+            cli = os.path.join(home, "claude")
+            open(cli, "w").close()
+            roles._shell[0] = 0
+            fake = mock.Mock(stdout="Last login: today\nalias claude=" + cli + "\n")
+            with mock.patch.dict(os.environ, {"HOME": home, "PATH": "", "SHELL": "/bin/zsh"}), \
+                    mock.patch.object(roles, "CLAUDE_DIRS", ()), mock.patch.object(roles.subprocess, "run", return_value=fake):
+                self.assertEqual(roles.claude_path({}), cli)
+            roles._shell[0] = 0
+
+    def test_path_set_from_the_models_page(self):
+        from codex_os3 import config, ui_api
+        with tempfile.TemporaryDirectory() as home, mock.patch.object(config, "HOME", home), \
+                mock.patch.object(config, "PATH", os.path.join(home, "config.json")), mock.patch.object(ui_api.store, "event"):
+            cli = os.path.join(home, "claude")
+            open(cli, "w").close()
+            self.assertEqual(ui_api.handle("POST", "config", {"claude_bin": cli + "x"}, {}, config.load())[0], 400)
+            self.assertEqual(ui_api.handle("POST", "config", {"claude_bin": " " + cli + " "}, {}, config.load())[0], 200)
+            self.assertEqual(config.load()["claude_bin"], cli)
+
+    def test_listed_without_codex_cache(self):
+        """No models_cache.json (fresh Codex / new account) must not hide the Claude models."""
+        from codex_os3 import roles
+        with tempfile.TemporaryDirectory() as home, mock.patch.object(roles, "claude_installed", return_value=True):
+            slugs = [m["slug"] for m in roles.available_models(home)]
+        self.assertIn("gpt-6-sol", slugs)
+        self.assertIn("claude-sonnet-5-5", slugs)
+
+
     """Claude Code installed in ~/.local/bin (its installer's default) is found although the service's
     PATH doesn't include it; before, only GPT models were offered."""
     def test_found_outside_path(self):
@@ -881,5 +913,6 @@ class ClaudeFoundTest(unittest.TestCase):
                 self.assertTrue(roles.claude_installed({}))
                 self.assertEqual(roles.claude_path({"claude_bin": os.path.join(home, "gone")}), cli)  # stale saved path
             with mock.patch.dict(os.environ, {"HOME": home, "USERPROFILE": home, "PATH": ""}), \
-                    mock.patch.object(roles, "CLAUDE_DIRS", ()):
+                    mock.patch.object(roles, "CLAUDE_DIRS", ()), \
+                    mock.patch.object(roles, "_from_login_shell", return_value=None):
                 self.assertFalse(roles.claude_installed({}))

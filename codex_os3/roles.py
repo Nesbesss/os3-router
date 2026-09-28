@@ -5,7 +5,7 @@ OS3 in "local" mode sends the same model id for everything, but the requests dif
   worker      background workers doing the job: "You are a worker agent", shell, computer_use, files
   background  small housekeeping calls: memory/fact extraction, reply review, titles (few or no tools)
 """
-import json, os, shutil
+import json, os, re, shutil, subprocess, sys, time
 
 ROLES = ("chat", "worker", "background")
 LABEL = {"chat": "Small (main chat)", "worker": "Standard (workers)", "background": "Background"}
@@ -112,7 +112,7 @@ def available_models(home=None):
         with open(path) as f:
             ms = json.load(f).get("models") or []
     except (OSError, ValueError):
-        return FALLBACK
+        ms = []  # no cache yet (fresh Codex, new account) is no reason to hide the Claude models
     out = [{"slug": m["slug"], "name": m.get("display_name") or m["slug"], "description": m.get("description") or "",
             "efforts": [e["effort"] for e in m.get("supported_reasoning_levels") or []] or ["medium"],
             "default_effort": m.get("default_reasoning_level") or "medium", "backend": "codex"}
@@ -124,6 +124,27 @@ def available_models(home=None):
 # all, the native installer's default), so a Claude Code installed after the router went unnoticed
 CLAUDE_DIRS = ("~/.local/bin", "~/.claude/local", "/opt/homebrew/bin", "/usr/local/bin", "~/.npm-global/bin",
                "~/.bun/bin", "~/AppData/Roaming/npm", "~/AppData/Local/Programs/claude")
+
+
+_shell = [0, None]  # [when asked, answer]
+
+
+def _from_login_shell():
+    """Last resort: ask the user's own shell where claude is. nvm/fnm/volta/asdf installs and aliases exist
+    only in its startup files, never in the service's PATH. Cached 60 s (it starts a shell)."""
+    if sys.platform == "win32":
+        return None
+    if time.time() - _shell[0] < 60:
+        return _shell[1]
+    found = None
+    try:
+        out = subprocess.run([os.environ.get("SHELL") or "/bin/zsh", "-ilc", "command -v claude"], capture_output=True,
+                             text=True, timeout=8, stdin=subprocess.DEVNULL).stdout
+        found = next((p for p in re.findall(r"/[^\s'\"=]+", out) if os.path.isfile(p)), None)
+    except (OSError, subprocess.SubprocessError):
+        pass
+    _shell[:] = [time.time(), found]
+    return found
 
 
 def claude_path(cfg=None):
@@ -142,6 +163,9 @@ def claude_path(cfg=None):
             f = os.path.normpath(os.path.join(os.path.expanduser(d), name))
             if os.path.isfile(f):
                 return f
+    p = _from_login_shell()
+    if p:
+        return p
     return cfg.get("claude_bin") or None  # set but missing right now (e.g. a drive not mounted): keep it
 
 

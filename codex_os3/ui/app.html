@@ -461,6 +461,8 @@ VIEWS.models = {static: true, async draw() {
   const on = CFG.role_routing !== false;
   $("#view").innerHTML = `<h1>Models</h1><p class="sub">Choose which model does what. Changes are saved right away.</p>
     <div class="card"><label class="sw"><input type="checkbox" id="routing" ${on ? "checked" : ""}><span><b>A different model for each role</b><span class="muted">Off: one model (${esc(CFG.model)}) does everything.</span></span></label></div>
+    ${MODELS.some(m => m.backend === "claude") ? "" : `<div class="card"><h3>Claude models</h3><p class="what">The router can't find Claude Code on this computer, so only ChatGPT models are listed. Already installed? Run <code>which claude</code> in Terminal and paste the path here.</p>
+      <div class="field"><span>Path</span><div class="row"><input id="claudebin" placeholder="/Users/you/.local/bin/claude" style="flex:1"><button class="btn" id="claudesave">Use this</button></div></div></div>`}
     ${on ? Object.keys(ROLE).map(r => { const cur = CFG.roles?.[r] || {model: CFG.model, effort: CFG.effort}; return `<div class="card role" data-role="${r}">
       <h3>${ROLE[r][0]}</h3><p class="what">${ROLE[r][1]}</p>
       <div class="field"><span>Model</span><select data-k="model">${opts(cur.model)}</select></div>
@@ -487,6 +489,7 @@ VIEWS.models = {static: true, async draw() {
     c.querySelector('[data-k="model"]').onchange = () => { delete c.dataset.effort; seg(r); save(); };
     c.querySelector('[data-k="fb"]').onchange = save;
     c.querySelector('[data-k="effort"]').onclick = (e) => { const b = e.target.closest(".ticks [data-e]"); if (!b) return; c.dataset.effort = b.dataset.e; seg(r); save(); }; });
+  if ($("#claudesave")) $("#claudesave").onclick = async () => { try { await post("config", {claude_bin: $("#claudebin").value}); toast("Saved"); render(true); } catch (e) { toast("Not found: check the path"); } };
   $("#routing").onchange = async (e) => { await post("config", {role_routing: e.target.checked}); toast("Saved"); render(true); };
 }};
 
