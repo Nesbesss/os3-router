@@ -2,7 +2,7 @@
 """Stand-in for the Codex CLI in tests: same flags, JSON events and rollout files, no network.
 Prompt triggers: FAKE_LIMIT (usage limit error), FAKE_HANG (sleep forever), FAKE_FINAL (final
 answer instead of a tool call), FAKE_BADJSON (invalid tool-call arguments), FAKE_LIMIT_SOL (usage
-limit only for *sol* models), FAKE_NOTFOUND (gives up with "couldn't find" until nudged)."""
+limit only for *sol* models), FAKE_PLAN (the plan has no *sol* models), FAKE_NOTFOUND (gives up with "couldn't find" until nudged)."""
 import json, os, sys, time, uuid
 
 a = sys.argv[1:]
@@ -25,6 +25,8 @@ def answer(prompt, model, schema, resumed):
     """-> (text, error). The same prompt triggers for `exec` and `app-server`."""
     if "FAKE_LIMIT" in prompt and ("FAKE_LIMIT_SOL" not in prompt or "sol" in model):
         return None, "You've hit your usage limit. Upgrade to Pro or try again at 9:11 PM."
+    if "FAKE_PLAN" in prompt and "sol" in model:  # a plan without sol (e.g. Free)
+        return None, "The 'gpt-6-sol' model is not supported when using Codex with a ChatGPT account."
     if "FAKE_NOTFOUND" in prompt and "BEFORE YOU GIVE UP" not in prompt and schema:
         return json.dumps({"kind": "final", "calls": [], "content": "I couldn't find Extreme weather on the page."}), None
     if schema and "FAKE_FINAL" not in prompt:
@@ -112,7 +114,7 @@ if "FAKE_HANG" in prompt:
 text, err = answer(prompt, model, "--output-schema" in a, resume)
 if err:
     ev(type="error", message=err)
-    ev(type="turn.failed", error={"message": "usage limit"})
+    ev(type="turn.failed", error={"message": err})
     sys.exit(1)
 ev(type="item.completed", item={"type": "agent_message", "text": text})
 usage = {"input_tokens": 1000, "cached_input_tokens": 400, "output_tokens": 10, "reasoning_output_tokens": 0}

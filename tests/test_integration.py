@@ -1,6 +1,6 @@
 """Runs the real service (supervisor + worker) against the fake Codex CLI. No network, no quota.
 Works on macOS, Linux and Windows."""
-import json, os, shutil, socket, subprocess, sys, tempfile, threading, time, unittest, urllib.error, urllib.request
+import json, os, shutil, socket, sqlite3, subprocess, sys, tempfile, threading, time, unittest, urllib.error, urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FAKE = os.path.join(ROOT, "tests", "fake_codex", "codex.cmd" if sys.platform == "win32" else "codex")
@@ -145,6 +145,23 @@ class Service(unittest.TestCase):
             self.assertIn("codex", self.get("/api/status")["fallback_active"])
         finally:
             self.api_post("config", body={"fallback": {}})
+
+    def test_model_outside_the_plan_switches_to_one_inside(self):
+        worker = {"tools": WEATHER, "messages": [{"role": "system", "content": "You are a worker agent."},
+                                                 {"role": "user", "content": "FAKE_PLAN weather?"}]}
+        try:
+            d = self.post(worker)["choices"][0]["message"]  # Free plan: sol refused -> the same request on luna
+            self.assertEqual(d["tool_calls"][0]["function"]["name"], "get_weather")
+            r = self.get("/api/requests?limit=1")[0]
+            self.assertEqual((r["mode"], r["model"].startswith("gpt-6-luna")), ("fresh(plan)", True))
+            worker["messages"][1]["content"] = "FAKE_PLAN again?"
+            self.post(worker)  # remembered: straight to luna
+            r = self.get("/api/requests?limit=1")[0]
+            self.assertEqual((r["mode"], r["model"].startswith("gpt-6-luna")), ("fresh", True))
+            self.assertIn("plan_model", [e["kind"] for e in self.get("/api/events?limit=20")])
+        finally:
+            with sqlite3.connect(os.path.join(self.home, "state.db")) as db:
+                db.execute("DELETE FROM kv WHERE k LIKE 'no_model:%'")
 
     def test_browser_worker_does_not_give_up_on_visible_things(self):
         browse = {"type": "function", "function": {"name": "dummy_system", "description": "drive the browser",

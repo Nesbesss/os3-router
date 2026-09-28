@@ -419,6 +419,9 @@ function heroState() {
   if ((st.fallback_active || []).length) return {cls: "warn", icon: "warn", title: "Using the fallback model", text: "Your subscription hit its limit, so the fallback model answers until it resets.", btn: ["Models", "models"]};
   return {cls: "good", icon: "check", title: "Everything works", text: conn.detail || ""};
 }
+const winName = (m, fb) => !m ? fb : m < 1440 ? Math.round(m / 60) + " hours" : m < 4320 ? "Today" : m < 28800 ? "This week" : "This month";
+const rings = (L) => { const w = [[L.p_pct, L.p_reset, winName(L.p_window, "5 hours")], [L.s_pct, L.s_reset, winName(L.s_window, "This week")]].filter(x => x[0] != null);
+  return (w.length ? w : [[null, null, "5 hours"], [null, null, "This week"]]).map(x => ring(...x)).join(""); };  // Max has only a weekly window
 function ring(pct, reset, label) {
   const stale = reset && reset < Date.now() / 1000, p = stale || pct == null ? 0 : Math.min(100, pct);
   const col = p >= 90 ? "var(--bad)" : p >= 70 ? "var(--warn)" : "var(--accent)", C = 2 * Math.PI * 42;
@@ -438,7 +441,7 @@ VIEWS.home = {async draw() {
       <div class="grow"><h1>${h.title}</h1><p>${esc(h.text)}</p></div>
       ${h.btn ? `<button class="btn primary big" data-go="${h.btn[1]}">${h.btn[0]}</button>` : ""}</div>
     <div class="grid">
-      ${(subs.length ? subs : [["codex", {}]]).map(([b, L]) => `<div class="card"><h2>${b === "claude" ? "Claude subscription" : b.startsWith("codex:") ? "ChatGPT · account " + esc(b.slice(6)) : "ChatGPT subscription"}</h2><div class="rings">${ring(L.p_pct, L.p_reset, "5 hours")}${ring(L.s_pct, L.s_reset, "This week")}</div></div>`).join("")}
+      ${(subs.length ? subs : [["codex", {}]]).map(([b, L]) => `<div class="card"><h2>${b === "claude" ? "Claude subscription" : b.startsWith("codex:") ? "ChatGPT · account " + esc(b.slice(6)) : "ChatGPT subscription"}</h2><div class="rings">${rings(L)}</div></div>`).join("")}
       <div class="card"><h2>Today</h2><div class="bignum">${fmtN(today.total.i)}</div><div class="muted">tokens read · ${today.total.n} requests from OS3 · ${fmtN(today.total.o)} written</div>
         <div style="margin-top:14px">${(today.by_role || []).filter(r => ROLE[r.role]).map(r => `<div class="mrow"><span><span class="chip ${r.role}">${ROLE[r.role][0]}</span></span><span class="muted">${fmtN(r.i)} · ${r.n} calls</span></div>`).join("")}</div></div>
     </div>
@@ -495,7 +498,7 @@ VIEWS.accounts = {static: true, async draw() {
   const card = (a) => { const [cls, txt] = state(a), L = a.limits;
     return `<div class="card"><div class="row" style="justify-content:space-between"><h2 style="margin:0">${a.id === "main" ? "Main account" : "Account " + esc(a.id)}</h2><span class="chip acct ${cls}">${txt}</span></div>
       <p class="muted" style="margin:6px 0 12px">${esc(a.email || "ChatGPT account")}${a.plan ? " · " + esc(a.plan) : ""}</p>
-      ${L ? `<div class="rings">${ring(L.p_pct, L.p_reset, "5 hours")}${ring(L.s_pct, L.s_reset, "This week")}</div>` : `<p class="muted">Not used yet: its limits show up after its first request.</p>`}
+      ${L ? `<div class="rings">${rings(L)}</div>` : `<p class="muted">Not used yet: its limits show up after its first request.</p>`}
       ${a.id !== "main" ? `<div class="row" style="margin-top:12px"><button class="btn" data-rm="${esc(a.id)}">Remove</button></div>` : ""}</div>`; };
   $("#view").innerHTML = `<h1>Accounts</h1><p class="sub">Add more ChatGPT accounts. The router uses one at a time and moves to the next when it's at ${A.switch_at}% or at its limit; once the first has room again it goes back. A conversation stays on its account as long as it can.</p>
     <div class="grid">${A.accounts.map(card).join("")}</div>

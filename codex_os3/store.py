@@ -88,12 +88,32 @@ def add_tokens(rid, usage):
 
 
 def add_limits(rl, backend="codex"):
+    """Store a subscription's limit windows by their real length: the short one (e.g. 5 hours) in p_*, the long one
+    (a week) in s_*. Plans differ: Plus has both, Max only a weekly window (sent as its "primary"), Free may have
+    others, so the order the backend sends them in means nothing."""
     if not rl:
         return
-    p, s = rl.get("primary") or {}, rl.get("secondary") or {}
+    wins = []
+    for w, default in ((rl.get("primary"), 300), (rl.get("secondary"), 10080)):
+        if w and w.get("used_percent") is not None:
+            wins.append(dict(w, window_minutes=w.get("window_minutes") or default))
+    wins.sort(key=lambda w: w["window_minutes"])
+    short = [w for w in wins if w["window_minutes"] < 3 * 1440]
+    long_ = [w for w in wins if w["window_minutes"] >= 3 * 1440]
+    p = short[0] if short else {}
+    s = long_[-1] if long_ else (short[-1] if len(short) > 1 else {})
     _w("INSERT INTO limits VALUES(?,?,?,?,?,?,?,?)",
        (time.time(), p.get("used_percent"), p.get("resets_at"), p.get("window_minutes"),
         s.get("used_percent"), s.get("resets_at"), s.get("window_minutes"), backend))
+
+
+def win_label(minutes, default):
+    """A limit window's name from its length: "5-hour", "daily", "weekly", "monthly"."""
+    if not minutes:
+        return default
+    if minutes < 1440:
+        return f"{round(minutes / 60)}-hour"
+    return "daily" if minutes < 3 * 1440 else "weekly" if minutes < 20 * 1440 else "monthly"
 
 
 def latest_limits():

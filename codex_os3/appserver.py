@@ -6,7 +6,7 @@ corrections, repairs and sessions work unchanged. Off by default until measured 
 import json, os, queue, subprocess, tempfile, threading, time
 
 from . import accounts, platform_util, sessions, store
-from .codex_runner import (DISABLED, RESET_RE, WORKDIR, ClientGone, CodexHung, UsageLimit, idle_limit,
+from .codex_runner import (DISABLED, PLAN_RE, RESET_RE, WORKDIR, ClientGone, CodexHung, UsageLimit, idle_limit,
                            known_features, slots, split_model)
 
 _EOF = {"method": "__eof__"}
@@ -231,6 +231,8 @@ def run(cfg, prompt, model, schema=None, alive=lambda: True, images=(), resume=N
             msg = " | ".join(errs) or f"no output from codex (turn {status})"
             if "newer version" in msg.lower():
                 store.kv_set("codex_outdated", time.time())
+            if PLAN_RE.search(msg):
+                raise UsageLimit(msg, plan=True)
             if "usage limit" in msg.lower():
                 r = RESET_RE.search(msg)
                 raise UsageLimit(msg, r.group(1).strip() if r else "")

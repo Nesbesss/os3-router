@@ -230,6 +230,44 @@ class Turn:
             except UsageLimit:
                 continue
 
+    def plan_model(self, refused=False):
+        """A model the plan of this Codex account doesn't include (Free has only the small ones) -> the
+        first listed model it hasn't refused; None while self.model is fine. Refusals are kept per account
+        for a day, so an upgraded plan gets its models back by itself."""
+        key, now = "no_model:" + self.account, time.time()
+        bad = {m: t for m, t in (store.kv_get(key) or {}).items() if t > now - 86400}
+        slug, effort = roles.codex_split(self.model)
+        if refused:
+            bad[slug] = now
+            store.kv_set(key, bad)
+        if slug not in bad:
+            return None
+        for m in roles.available_models(accounts.home(self.account)):
+            if m["backend"] == "codex" and m["slug"] not in bad:
+                return f"{m['slug']}-{effort if effort in m['efforts'] else m['default_effort']}"
+        return None
+
+    def plan_swap(self, err):
+        """The model isn't in this account's plan: the same request, fresh, on one that is -> (raw, thread) or None."""
+        if self.backend != "codex" or not err.plan:
+            return None
+        for _ in range(4):
+            sub = self.plan_model(refused=True)
+            if not sub:
+                return None
+            old = roles.codex_split(self.model)[0]
+            msg = f"{old} isn't in the plan of Codex account {self.account}: {roles.LABEL.get(self.role, self.role)} uses {sub}"
+            self.ev("plan_model", msg, "warn")
+            notify.desktop(msg, key=f"plan:{self.account}:{old}")
+            self.model = sub
+            images, prompt = self.build(full=True)
+            try:
+                return self.codex(prompt, images.files, keep=self.tracked)
+            except UsageLimit as e:
+                if not e.plan:
+                    raise
+        return None
+
     def run(self):
         """-> (message dict, finish_reason)."""
         tools = self.tools
@@ -247,6 +285,9 @@ class Turn:
                 self.ev("account_switch", f"account {holder} is nearly out: continuing on account {self.account} (fresh)")
                 thread = None
                 images, prompt = self.build(full=True)
+            sub = self.plan_model()  # a model this account's plan refused earlier
+            if sub:
+                self.model = sub
         mode = "resume" if thread else "fresh"
         ok, status = False, "error"
         try:
@@ -256,8 +297,11 @@ class Turn:
                 raise
             except UsageLimit as e:
                 got = self.other_account(e)
+                plan = None if got else self.plan_swap(e)
                 if got:
                     (raw, self.tid), mode = got, "fresh(account)"
+                elif plan:
+                    (raw, self.tid), mode = plan, "fresh(plan)"
                 else:
                     fb = self.fallback_model(e)
                     if not fb:

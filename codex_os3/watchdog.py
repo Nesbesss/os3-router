@@ -102,8 +102,8 @@ def rules(s):
                     "msg": f"{ul.get('backend', 'codex').title()} usage limit reached"
                            + (f", resets at {ul['resets']}" if ul.get("resets") else "")})
     for b, lim in (s["limits"] or {}).items():
-        for pk, rk, win in (("p_pct", "p_reset", "5-hour"), ("s_pct", "s_reset", "weekly")):
-            pct, reset = lim.get(pk) or 0, lim.get(rk)
+        for pk, rk, wk, dflt in (("p_pct", "p_reset", "p_window", "5-hour"), ("s_pct", "s_reset", "s_window", "weekly")):
+            pct, reset, win = lim.get(pk) or 0, lim.get(rk), store.win_label(lim.get(wk), dflt)
             if pct >= 90 and not (reset and reset < time.time()):  # a passed reset means it's fresh again
                 name = "Claude" if b == "claude" else "ChatGPT (Codex)"
                 out.append({"kind": "limit_high", "level": "warn", "action": None, "key": f"{b}:{win}:{reset}",

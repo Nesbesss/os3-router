@@ -95,7 +95,9 @@ def main(argv):
         a = os3.status()
         print(f"rabbit-agent: {a['status']} (pid {a.get('pid')})" if a else "rabbit-agent: not installed on this machine")
         for b, l in store.latest_limits().items():
-            print(f"{b.title()} 5h window: {l['p_pct']}% used · weekly: {l['s_pct']}% used")
+            wins = [f"{store.win_label(l[w], d)}: {l[k]}% used" for k, w, d in (("p_pct", "p_window", "5-hour"), ("s_pct", "s_window", "weekly"))
+                    if l[k] is not None]
+            print(f"{b.title()} " + (" · ".join(wins) or "no limits reported yet"))
         return 0
     if cmd == "export" and len(argv) > 1:
         from . import export

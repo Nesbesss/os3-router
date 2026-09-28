@@ -354,10 +354,13 @@ function reqRows(rs) {
     const dot = r.status === "ok" ? "" : r.status === "running" ? "run" : r.status === "gone" ? "warn" : "bad";
     return `<tr title="${esc(fmtT(r.ts))}"><td>${ago(r.ts)}</td><td><span class="pill2 ${esc(r.role || "")}">${esc(ROLE_LABEL[r.role] || r.role || "?")}</span></td><td>${esc(modelOf(r.model))} <span class="muted">${esc(effortOf(r.model))}</span></td><td class="what">${whatDid(r)}</td><td class="num">${r.done_ts ? Math.round(r.done_ts - r.ts) + "s" : "…"}</td><td class="num">${fmtN(r.in_tok)}</td><td><span class="dot ${dot}"></span></td></tr>`; }).join("")}</table>`;
 }
+const winName = (m, fb) => !m ? fb : m < 1440 ? Math.round(m / 60) + "-hour window" : m < 4320 ? "today" : m < 28800 ? "this week" : "this month";
+const lims = (L) => { const w = [[L.p_pct, L.p_reset, winName(L.p_window, "5-hour window")], [L.s_pct, L.s_reset, winName(L.s_window, "this week")]].filter(x => x[0] != null);
+  return (w.length ? w : [[null, null, "5-hour window"], [null, null, "this week"]]).map(x => lim(...x)).join(""); };  // Max: weekly only
 async function dash(st) {
   banner(st);
   const all = Object.entries(st.limits_all || (st.limits ? {codex: st.limits} : {}));
-  $("#subs").innerHTML = (all.length ? all : [["codex", {}]]).map(([b, L]) => `<div class="card"><h2>${b === "claude" ? "Claude subscription" : "ChatGPT subscription (Codex)"}</h2><div class="lim2">${lim(L.p_pct, L.p_reset, "5-hour window")}${lim(L.s_pct, L.s_reset, "this week")}</div></div>`).join("");
+  $("#subs").innerHTML = (all.length ? all : [["codex", {}]]).map(([b, L]) => `<div class="card"><h2>${b === "claude" ? "Claude subscription" : "ChatGPT subscription (Codex)"}</h2><div class="lim2">${lims(L)}</div></div>`).join("");
   const [c, ms] = await Promise.all([api("config"), MODELS.length ? MODELS : api("models")]);
   MODELS = ms;
   const nm = (slug) => (ms.find(m => m.slug === slug) || {name: slug}).name, R = c.roles || {};
