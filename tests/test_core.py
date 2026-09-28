@@ -1070,7 +1070,6 @@ class SecondRouterTest(unittest.TestCase):
 
 
 class ClaudeFoundTest(unittest.TestCase):
-    @unittest.skipIf(sys.platform == "win32", "Windows has no login shell to ask")
     def test_found_inside_the_desktop_app_or_editor_extension(self):
         """No `claude` command anywhere (only the Claude desktop app / VS Code extension): its bundled copy is used,
         the newest one, and a real install in the usual folders still wins."""
@@ -1094,6 +1093,7 @@ class ClaudeFoundTest(unittest.TestCase):
                     mock.patch.object(roles, "CLAUDE_DIRS", ("~/.local/bin",)):
                 self.assertEqual(roles.claude_path({}), real)
 
+    @unittest.skipIf(sys.platform == "win32", "Windows has no login shell to ask")
     def test_found_by_login_shell(self):
         """An nvm/alias install is only known to the user's shell: ask it when the usual folders miss."""
         from codex_os3 import roles

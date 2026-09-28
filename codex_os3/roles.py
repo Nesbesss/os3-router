@@ -185,7 +185,7 @@ CLAUDE_BUNDLED = ("~/Library/Application Support/Claude/claude-code/*/claude.app
 
 
 def _bundled_claude():
-    hits = [f for pat in CLAUDE_BUNDLED for f in glob.glob(os.path.expanduser(pat)) if os.path.isfile(f)]
+    hits = [os.path.normpath(f) for pat in CLAUDE_BUNDLED for f in glob.glob(os.path.expanduser(pat)) if os.path.isfile(f)]  # (normpath: Windows mixes / and \\)
     return max(hits, key=os.path.getmtime) if hits else None
 
 
