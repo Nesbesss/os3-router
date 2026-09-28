@@ -139,7 +139,7 @@ def claude_path(cfg=None):
         return p
     for d in CLAUDE_DIRS:
         for name in ("claude", "claude.exe", "claude.cmd"):
-            f = os.path.join(os.path.expanduser(d), name)
+            f = os.path.normpath(os.path.join(os.path.expanduser(d), name))
             if os.path.isfile(f):
                 return f
     return cfg.get("claude_bin") or None  # set but missing right now (e.g. a drive not mounted): keep it
