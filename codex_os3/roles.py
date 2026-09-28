@@ -151,7 +151,9 @@ def claude_installed(cfg=None):
 
 _E = ["low", "medium", "high", "xhigh", "max"]
 CLAUDE = [
-    {"slug": "claude-sonnet-5", "name": "Claude Sonnet 5", "description": "Claude Code · balanced speed and capability.",
+    {"slug": "claude-sonnet-5-5", "name": "Claude Sonnet 5.5", "description": "Claude Code · fast and capable; the best balance.",
+     "efforts": _E, "default_effort": "medium", "backend": "claude"},
+    {"slug": "claude-sonnet-5", "name": "Claude Sonnet 5", "description": "Claude Code · the previous Sonnet.",
      "efforts": _E, "default_effort": "medium", "backend": "claude"},
     {"slug": "claude-opus-5-5", "name": "Claude Opus 5.5", "description": "Claude Code · most capable; uses the most of your limits.",
      "efforts": _E, "default_effort": "medium", "backend": "claude"},
