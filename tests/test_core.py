@@ -735,6 +735,26 @@ class CodexImagesTest(unittest.TestCase):
         self.assertFalse(repair.decision_problems(bad, tools, SYSTEM))  # Claude: OS3's tool is the only way
 
 
+class PlanLimitsTest(unittest.TestCase):
+    """Limit windows are stored by their length: Plus sends 5 h + weekly, Max only a weekly one (as "primary")."""
+    def row(self, rl):
+        store._w("DELETE FROM limits WHERE backend='plantest'")
+        store.add_limits(rl, "plantest")
+        return store.latest_limits()["plantest"]
+
+    def test_plans(self):
+        w = lambda pct, mins: {"used_percent": pct, "resets_at": time.time() + 3600, "window_minutes": mins}
+        plus = self.row({"primary": w(20, 300), "secondary": w(40, 10080)})
+        self.assertEqual((plus["p_pct"], plus["s_pct"], plus["s_window"]), (20, 40, 10080))
+        mx = self.row({"primary": w(12, 10080), "secondary": None})  # Max: weekly only
+        self.assertEqual((mx["p_pct"], mx["s_pct"], mx["s_window"]), (None, 12, 10080))
+        free = self.row({"primary": w(60, 300)})
+        self.assertEqual((free["p_pct"], free["s_pct"]), (60, None))
+        old = self.row({"primary": {"used_percent": 5}, "secondary": {"used_percent": 7}})  # no lengths: keep the order
+        self.assertEqual((old["p_pct"], old["s_pct"]), (5, 7))
+        self.assertEqual((store.win_label(10080, "x"), store.win_label(300, "x"), store.win_label(None, "x")), ("weekly", "5-hour", "x"))
+
+
 class AppServerHangTest(unittest.TestCase):
     """A stalled turn that only gets status notices (MCP startup, thread status) must count as hung."""
     def test_status_noise_is_not_activity(self):

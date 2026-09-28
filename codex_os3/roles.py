@@ -104,9 +104,10 @@ FALLBACK = [
 ]
 
 
-def available_models():
-    """From Codex's own model cache (refreshed by every codex run), so new models show up by themselves."""
-    path = os.path.join(os.path.expanduser(os.environ.get("CODEX_HOME", "~/.codex")), "models_cache.json")
+def available_models(home=None):
+    """From Codex's own model cache (refreshed by every codex run), so new models show up by themselves.
+    home: an account's CODEX_HOME (each account keeps its own cache)."""
+    path = os.path.join(home or os.path.expanduser(os.environ.get("CODEX_HOME", "~/.codex")), "models_cache.json")
     try:
         with open(path) as f:
             ms = json.load(f).get("models") or []

@@ -103,6 +103,8 @@ def idle_limit(cfg, effort, role=None):
 
 
 RESET_RE = re.compile(r"try again (?:at|in) ([^.\"\\]+)", re.I)
+# a model this ChatGPT plan doesn't include (e.g. Free): "The 'gpt-6-sol' model is not supported when using Codex with a ChatGPT account."
+PLAN_RE = re.compile(r"not supported when using codex with a chatgpt account|not (?:included|available) (?:in|on|with) your (?:plan|subscription)", re.I)
 
 
 def last_token_count(thread):
@@ -197,6 +199,8 @@ def run(cfg, prompt, model, schema=None, alive=lambda: True, images=(), resume=N
         msg = " | ".join(errs) or ("\n".join(err_lines) or "no output from codex")[-600:]
         if "newer version" in msg.lower():  # e.g. "requires a newer version of Codex": the watchdog updates it
             store.kv_set("codex_outdated", time.time())
+        if PLAN_RE.search(msg):
+            raise UsageLimit(msg, plan=True)
         if "usage limit" in msg.lower():
             m = RESET_RE.search(msg)
             raise UsageLimit(msg, m.group(1).strip() if m else "")
