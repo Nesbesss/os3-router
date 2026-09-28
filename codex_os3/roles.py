@@ -120,8 +120,33 @@ def available_models(home=None):
     return (out or FALLBACK) + (CLAUDE if claude_installed() else [])
 
 
+# where Claude Code's installers put the CLI: the service's PATH usually lacks these (~/.local/bin above
+# all, the native installer's default), so a Claude Code installed after the router went unnoticed
+CLAUDE_DIRS = ("~/.local/bin", "~/.claude/local", "/opt/homebrew/bin", "/usr/local/bin", "~/.npm-global/bin",
+               "~/.bun/bin", "~/AppData/Roaming/npm", "~/AppData/Local/Programs/claude")
+
+
+def claude_path(cfg=None):
+    """Claude Code's CLI: the saved path, else PATH, else its usual install folders. None = not installed."""
+    if cfg is None:
+        from . import config
+        cfg = config.load()
+    p = cfg.get("claude_bin")
+    if p and os.path.exists(p):
+        return p
+    p = shutil.which("claude")
+    if p:
+        return p
+    for d in CLAUDE_DIRS:
+        for name in ("claude", "claude.exe", "claude.cmd"):
+            f = os.path.normpath(os.path.join(os.path.expanduser(d), name))
+            if os.path.isfile(f):
+                return f
+    return cfg.get("claude_bin") or None  # set but missing right now (e.g. a drive not mounted): keep it
+
+
 def claude_installed(cfg=None):
-    return bool((cfg or {}).get("claude_bin") or shutil.which("claude"))
+    return bool(claude_path(cfg))
 
 
 _E = ["low", "medium", "high", "xhigh", "max"]

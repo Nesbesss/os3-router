@@ -864,3 +864,22 @@ class SecondRouterTest(unittest.TestCase):
                 f.write("999999")                                          # dead
             with mock.patch.object(supervisor.urllib.request, "urlopen", return_value=ok):
                 self.assertFalse(supervisor.already_running(cfg))
+
+
+class ClaudeFoundTest(unittest.TestCase):
+    """Claude Code installed in ~/.local/bin (its installer's default) is found although the service's
+    PATH doesn't include it; before, only GPT models were offered."""
+    def test_found_outside_path(self):
+        from codex_os3 import roles
+        with tempfile.TemporaryDirectory() as home:
+            os.makedirs(os.path.join(home, ".local", "bin"))
+            cli = os.path.join(home, ".local", "bin", "claude")
+            open(cli, "w").close()
+            with mock.patch.dict(os.environ, {"HOME": home, "USERPROFILE": home, "PATH": ""}), \
+                    mock.patch.object(roles, "CLAUDE_DIRS", ("~/.local/bin",)):
+                self.assertEqual(roles.claude_path({}), cli)
+                self.assertTrue(roles.claude_installed({}))
+                self.assertEqual(roles.claude_path({"claude_bin": os.path.join(home, "gone")}), cli)  # stale saved path
+            with mock.patch.dict(os.environ, {"HOME": home, "USERPROFILE": home, "PATH": ""}), \
+                    mock.patch.object(roles, "CLAUDE_DIRS", ()):
+                self.assertFalse(roles.claude_installed({}))
