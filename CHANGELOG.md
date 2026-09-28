@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.12 (2026-09-28)
+- **A router that can't start no longer restarts every 2 seconds for ever.** If the router keeps crashing right after it starts (for example another program took its port), it now waits longer between tries (up to a minute) and writes one problem entry per try for the first few, instead of filling the log and the activity list.
+- **A slow start for one ChatGPT account no longer holds up the others.** With several accounts, starting Codex for one used to block requests for all of them until it finished.
+- **A Codex that fails to start is no longer left running in the background.**
+- **The "limit at 90%" warning names the account** when you have several ChatGPT accounts ("ChatGPT account 2 5-hour limit at 95%"), not just "ChatGPT".
+
 ## 0.5.11 (2026-09-28)
 - **Security: a website can no longer read your router's key or change its settings.** A web page could make your browser talk to the router as if it were on your own computer (DNS rebinding) and read the API key from the dashboard. The router now only answers the dashboard to requests addressed to `localhost`, `127.0.0.1` or `::1`. Nothing changes for the app or for OS3. If you use the dashboard from another computer, that still works with your key as before. **Please update.**
 - **The installer puts the latest release on your computer, not the newest unfinished code.** New installs (macOS, Windows, Linux) now get the same tested version updates give you.

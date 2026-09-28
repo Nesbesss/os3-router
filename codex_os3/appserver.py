@@ -28,8 +28,12 @@ class Server:
         self.limits, self.limits_ts = None, 0
         threading.Thread(target=self._read, daemon=True).start()
         threading.Thread(target=lambda: [None for _ in self.p.stderr], daemon=True).start()  # drain
-        self.request("initialize", {"clientInfo": {"name": "os3-router", "version": "appserver"}})
-        self._send({"jsonrpc": "2.0", "method": "initialized"})
+        try:
+            self.request("initialize", {"clientInfo": {"name": "os3-router", "version": "appserver"}})
+            self._send({"jsonrpc": "2.0", "method": "initialized"})
+        except Exception:
+            self.stop()  # a codex that won't start must not be left running behind the error
+            raise
 
     def alive(self):
         return self.p.poll() is None
@@ -96,7 +100,7 @@ class Server:
         platform_util.kill_tree(self.p)
 
 
-_servers, _lock = {}, threading.Lock()
+_servers, _lock, _starting = {}, threading.Lock(), {}
 
 
 def server(cfg, account=None, image_gen=False):
@@ -106,8 +110,17 @@ def server(cfg, account=None, image_gen=False):
     key = acct + ("+images" if image_gen else "")
     with _lock:
         s = _servers.get(key)
-        if s is None or not s.alive() or s.codex != codex:
-            s = _servers[key] = Server(codex, None if acct == accounts.MAIN else acct, images=image_gen)
+        if s is not None and s.alive() and s.codex == codex:
+            return s
+        lk = _starting.setdefault(key, threading.Lock())
+    with lk:  # one start per account; other accounts' requests don't wait behind a slow one
+        with _lock:
+            s = _servers.get(key)
+            if s is not None and s.alive() and s.codex == codex:
+                return s
+        s = Server(codex, None if acct == accounts.MAIN else acct, images=image_gen)
+        with _lock:
+            _servers[key] = s
         return s
 
 
