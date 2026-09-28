@@ -41,6 +41,9 @@ def node_step():
         return dict(step, state="error", detail="This machine isn't an OS3 device yet. In OS3, add this computer as a "
                     "device first (rabbit's node installer). The router must run on the device you pick in OS3.")
     a = os3.status() or {}
+    if a.get("status") == "connected" and not a.get("running"):
+        return dict(step, state="error", detail="The saved agent status says connected, but its recorded "
+                    "process could not be verified. Check the OS3 node status on this machine.")
     if not (a.get("status") == "connected" and a.get("running")):
         return dict(step, state="error", detail=f"The rabbit-agent is {a.get('status') or 'not running'}. Click Fix "
                     "to restart it.", action="restart_agent")
