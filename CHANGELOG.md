@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.5.1 (unreleased)
+- **Update checks keep working when GitHub's API rate limit is reached.** The router uses GitHub's public latest-release link to find the newest version, so automatic and manual update checks can continue without waiting for the API quota to reset. The fallback also works when Python cannot verify website certificates and must use the system's curl tool.
+
 ## 0.5.0 (2026-09-28)
 The biggest update yet.
 - **Up to 3× faster:** one Codex now stays running instead of starting for every message. Follow-up replies take
