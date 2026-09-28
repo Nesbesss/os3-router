@@ -48,11 +48,21 @@ def requested_effort(body):
 
 def fit_effort(model, effort):
     """The nearest effort this model supports (e.g. OS3's "minimal" on a Claude model -> "low")."""
-    m = next((x for x in available_models() + CLAUDE if x["slug"] == model), None)
+    m = next((x for x in codex_models() + CLAUDE if x["slug"] == model), None)
     if not m or effort in m["efforts"]:
         return effort
+    if effort not in EFFORT_ORDER:  # a hand-edited config value
+        return m["default_effort"]
     i = EFFORT_ORDER.index(effort)
     return min(m["efforts"], key=lambda e: abs(EFFORT_ORDER.index(e) - i) if e in EFFORT_ORDER else 99)
+
+
+def runnable(cfg, model):
+    """A Claude model can't run without Claude Code (uninstalled since it was chosen, or settings copied from
+    another machine): use the Codex default instead of failing every request of that role."""
+    if backend(model) != "claude" or claude_installed(cfg):
+        return model
+    return cfg["model"] if backend(cfg["model"]) == "codex" else FALLBACK[0]["slug"]
 
 
 def pick(cfg, role, requested, os3_effort=None, images=False):
@@ -60,7 +70,7 @@ def pick(cfg, role, requested, os3_effort=None, images=False):
     routing off, from OS3); the effort from OS3's reasoning slider when it sends one, else from the
     dashboard."""
     if not cfg.get("role_routing", True):
-        model = requested or cfg["model"]
+        model = runnable(cfg, requested or cfg["model"])
         if os3_effort and codex_split(model)[1] is None:
             return f"{model}-{fit_effort(model, os3_effort)}"
         return model
@@ -71,13 +81,14 @@ def pick(cfg, role, requested, os3_effort=None, images=False):
     # OS3's sliders are Small and Standard; it sends Small's on background calls too, but those run
     # often and OS3 has no Background slider, so the dashboard decides there
     effort = (r.get("effort") or os3_effort if role == "background" else os3_effort or r.get("effort")) or cfg["effort"]
+    model = runnable(cfg, model)
     return f"{model}-{fit_effort(model, effort)}"
 
 
 def pick_fallback(cfg, role, os3_effort=None):
     """The model this role switches to while its subscription is at its usage limit, or None."""
     f = (cfg.get("fallback") or {}).get(role) or {}
-    if not f.get("model"):
+    if not f.get("model") or runnable(cfg, f["model"]) != f["model"]:
         return None
     effort = (f.get("effort") or os3_effort if role == "background" else os3_effort or f.get("effort")) or cfg["effort"]
     return f"{f['model']}-{fit_effort(f['model'], effort)}"
@@ -105,6 +116,11 @@ FALLBACK = [
 
 
 def available_models(home=None):
+    """The Codex models plus, when Claude Code is installed, the Claude ones."""
+    return codex_models(home) + (CLAUDE if claude_installed() else [])
+
+
+def codex_models(home=None):
     """From Codex's own model cache (refreshed by every codex run), so new models show up by themselves.
     home: an account's CODEX_HOME (each account keeps its own cache)."""
     path = os.path.join(home or os.path.expanduser(os.environ.get("CODEX_HOME", "~/.codex")), "models_cache.json")
@@ -117,7 +133,7 @@ def available_models(home=None):
             "efforts": [e["effort"] for e in m.get("supported_reasoning_levels") or []] or ["medium"],
             "default_effort": m.get("default_reasoning_level") or "medium", "backend": "codex"}
            for m in ms if m.get("slug") and m.get("visibility", "list") == "list"]
-    return (out or FALLBACK) + (CLAUDE if claude_installed() else [])
+    return out or FALLBACK
 
 
 # where Claude Code's installers put the CLI: the service's PATH usually lacks these (~/.local/bin above
@@ -131,11 +147,13 @@ _shell = [0, None]  # [when asked, answer]
 
 def _from_login_shell():
     """Last resort: ask the user's own shell where claude is. nvm/fnm/volta/asdf installs and aliases exist
-    only in its startup files, never in the service's PATH. Cached 60 s (it starts a shell)."""
+    only in its startup files, never in the service's PATH. Misses are cached 5 min (it starts a shell)."""
     if sys.platform == "win32":
         return None
-    if time.time() - _shell[0] < 60:
+    if _shell[1] and os.path.isfile(_shell[1]):
         return _shell[1]
+    if time.time() - _shell[0] < 300:  # a miss is re-checked rarely: it starts a shell
+        return None
     found = None
     try:
         out = subprocess.run([os.environ.get("SHELL") or "/bin/zsh", "-ilc", "command -v claude"], capture_output=True,

@@ -67,6 +67,13 @@ def rollout_files(thread):
             + glob.glob(os.path.join(claude, "projects", "*", f"{thread}.jsonl")))
 
 
+def is_claude(thread):
+    """True when this thread is a Claude Code session (not a Codex thread): a task that moved from one backend
+    to the other (fallback, a changed model) must start fresh, not `resume` an id the other CLI doesn't know."""
+    claude = os.path.expanduser(os.environ.get("CLAUDE_CONFIG_DIR", "~/.claude"))
+    return bool(glob.glob(os.path.join(claude, "projects", "*", f"{thread}.jsonl")))
+
+
 def sweep():
     """Drop idle sessions and delete their rollout files (they hold every screenshot)."""
     for s in store.sessions_stale(TTL):

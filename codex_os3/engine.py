@@ -226,12 +226,13 @@ class Turn:
             self.ev("account_switch", msg, "warn")
             notify.desktop(msg, key="account:" + nxt)
             self.account = nxt
+            self.model = self.plan_model() or self.model  # that account's plan may lack the model too
             images, prompt = self.build(full=True)
             try:
                 return self.codex(prompt, images.files, keep=self.tracked)
             except UsageLimit as e:
                 if e.plan:
-                    raise
+                    return self.plan_swap(e)
                 err = e
 
     def plan_model(self, refused=False):
@@ -282,6 +283,10 @@ class Turn:
             if self.tracked:
                 sessions.done(self.task, None, self.msgs, False)
             raise EngineError("no messages")
+        if thread and (accounts.owner(thread) if self.backend == "claude" else sessions.is_claude(thread)):  # a thread of the other backend
+            self.ev("thread_dropped", f"the task's thread belongs to the other backend: {self.backend} starts fresh")
+            thread = None
+            images, prompt = self.build(full=True)
         if self.backend == "codex":  # which account: the thread's own while it has room
             holder = accounts.owner(thread) if thread else None
             self.account = accounts.pick(prefer=holder) or accounts.MAIN
@@ -340,6 +345,9 @@ class Turn:
             when = f" — resets at {e.resets}" if e.resets else ""
             self.ev("usage_limit", str(e)[:200], "error")
             name = "Claude" if self.backend == "claude" else "Codex"
+            if isinstance(e, SignedOut) and self.backend == "claude":
+                return {"role": "assistant", "content": "⚠️ Claude Code is signed out. In Terminal run `claude`, then "
+                        "`/login`. Nothing was done."}, "stop"
             if isinstance(e, SignedOut):
                 return {"role": "assistant", "content": "⚠️ Codex is signed out (OpenAI ended the login, e.g. after a "
                         "plan change). Open the OS3 Router app → Accounts → Sign in again. Nothing was done."}, "stop"

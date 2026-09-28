@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.10 (2026-09-28)
+- **Claude Code signed out is now said plainly.** Before, a Claude Code that was signed out (or whose login had expired) gave a raw error, or the wrong message about Codex. The router now tells you to run `claude`, then `/login`, and a fallback model takes over meanwhile if you set one.
+- **A Claude model that can't run no longer breaks a role.** If a role (or its fallback) uses a Claude model but Claude Code isn't installed or can't be found, the router uses your default ChatGPT model instead of failing every request.
+- **A model Claude Code doesn't know or you can't use** (Claude Code too old, or not in your plan) now shows the "not in your plan, pick another model" message instead of a raw error.
+- **Switching between ChatGPT and Claude in the middle of a task no longer wastes a call.** A task that moved to the other one (a fallback, or you changed the model) used to try to continue the other's conversation, fail, and retry; it now starts fresh straight away.
+- **A second ChatGPT account on a smaller plan.** When the first account hit its limit and the next account's plan lacked the model (Free has only the small ones), the request failed; it now runs on a model that account has.
+- **Faster requests.** The Claude lookup added in 0.5.9 could start a shell during a request; it no longer does, and an odd effort value in the settings no longer breaks a request.
+
 ## 0.5.9 (2026-09-28)
 - **Claude models no longer go missing when Claude Code is installed in an unusual place.** If the router can't find Claude Code in its usual folders, it now asks your own shell where `claude` is. That covers installs through nvm, fnm, volta or asdf, and a `claude` that is only an alias.
 - **You can point the router at Claude Code yourself.** When no Claude models are listed, **Models** now shows a box: run `which claude` in Terminal, paste the path, and the Claude models appear right away.
