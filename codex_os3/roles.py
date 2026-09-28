@@ -48,7 +48,7 @@ def requested_effort(body):
 
 def fit_effort(model, effort):
     """The nearest effort this model supports (e.g. OS3's "minimal" on a Claude model -> "low")."""
-    m = next((x for x in codex_models() + CLAUDE if x["slug"] == model), None)
+    m = next((x for x in all_codex_models() + CLAUDE if x["slug"] == model), None)
     if not m or effort in m["efforts"]:
         return effort
     if effort not in EFFORT_ORDER:  # a hand-edited config value
@@ -116,24 +116,57 @@ FALLBACK = [
 
 
 def available_models(home=None):
-    """The Codex models plus, when Claude Code is installed, the Claude ones."""
-    return codex_models(home) + (CLAUDE if claude_installed() else [])
+    """The Codex models plus, when Claude Code is installed, the Claude ones. No home: every Codex account's
+    models (an account on a paid plan has models the Free one doesn't); a home: just that account's."""
+    return (codex_models(home) if home else all_codex_models()) + (CLAUDE if claude_installed() else [])
+
+
+def account_models(home):
+    """One account's model list, or None when it has none yet: Codex's own cache (refreshed by every codex run of
+    that account, so new models show up by themselves), else the one the router asked Codex for."""
+    for name, raw in (("models_cache.json", True), ("os3-models.json", False)):
+        try:
+            with open(os.path.join(home, name)) as f:
+                ms = json.load(f).get("models") or []
+        except (OSError, ValueError):
+            continue
+        if raw:
+            ms = [{"slug": m["slug"], "name": m.get("display_name") or m["slug"], "description": m.get("description") or "",
+                   "efforts": [e["effort"] for e in m.get("supported_reasoning_levels") or []] or ["medium"],
+                   "default_effort": m.get("default_reasoning_level") or "medium", "backend": "codex"}
+                  for m in ms if m.get("slug") and m.get("visibility", "list") == "list"]
+        if ms:
+            return ms
+    return None
 
 
 def codex_models(home=None):
-    """From Codex's own model cache (refreshed by every codex run), so new models show up by themselves.
-    home: an account's CODEX_HOME (each account keeps its own cache)."""
-    path = os.path.join(home or os.path.expanduser(os.environ.get("CODEX_HOME", "~/.codex")), "models_cache.json")
-    try:
-        with open(path) as f:
-            ms = json.load(f).get("models") or []
-    except (OSError, ValueError):
-        ms = []  # no cache yet (fresh Codex, new account) is no reason to hide the Claude models
-    out = [{"slug": m["slug"], "name": m.get("display_name") or m["slug"], "description": m.get("description") or "",
-            "efforts": [e["effort"] for e in m.get("supported_reasoning_levels") or []] or ["medium"],
-            "default_effort": m.get("default_reasoning_level") or "medium", "backend": "codex"}
-           for m in ms if m.get("slug") and m.get("visibility", "list") == "list"]
-    return out or FALLBACK
+    """One account's models (default: the main one), the built-in list when it has none yet."""
+    return account_models(home or os.path.expanduser(os.environ.get("CODEX_HOME", "~/.codex"))) or FALLBACK
+
+
+def all_codex_models():
+    """Every Codex account's models together. A model that only some accounts have carries "only": those accounts
+    (shown in the model selector, and used to send a request to an account that can serve it)."""
+    from . import accounts
+    seen, known = {}, 0
+    for a in accounts.all_accounts():
+        ms = account_models(accounts.home(a))
+        if ms is None:
+            continue
+        known += 1
+        for m in ms:
+            e = seen.setdefault(m["slug"], dict(m, efforts=list(m["efforts"]), accounts=[]))
+            e["accounts"].append(a)
+            e["efforts"] += [x for x in m["efforts"] if x not in e["efforts"]]
+    if not seen:
+        return FALLBACK
+    for e in seen.values():
+        e["efforts"].sort(key=lambda x: EFFORT_ORDER.index(x) if x in EFFORT_ORDER else 99)
+        if known > 1 and len(e["accounts"]) < known:  # only when every account's list is known
+            e["only"] = e["accounts"]
+        del e["accounts"]
+    return list(seen.values())
 
 
 # where Claude Code's installers put the CLI: the service's PATH usually lacks these (~/.local/bin above

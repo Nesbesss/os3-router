@@ -8,6 +8,7 @@
 - **After installing, the installer asks the running router what it sees**, not its own window: is Codex found and signed in, is Claude Code available, and (when you're watching) a real test request. If something is wrong it says what, instead of "installed".
 - **Windows: a failed install no longer closes the window with the message in it,** any error (not only the ones the installer expected) gets the friendly explanation, and if Windows won't let you create the scheduled task (some company PCs), the router starts from your Windows startup list instead.
 - **macOS: the installer prefers Homebrew's or the system's Python** over whatever `python3` your shell has (conda, pyenv), which the background service depends on for good.
+- **Several ChatGPT accounts: the model list now shows every account's models.** With a Free account and a Plus account, the list used to show only the first account's models, so what Plus adds (like the bigger models) never appeared. It now shows all of them, marks the ones only some accounts have (for example "GPT-6-Sol (account 2 only)"), and sends a request to an account whose plan includes the model, instead of giving the Free account a model it refuses and switching to a smaller one. An account that hasn't handled a request yet is asked for its models once.
 - **Failed installs write what a person helping needs** (versions, where Python, Codex and Claude were found, the router's own checks, the end of its log) to `install.log`. Nothing is sent anywhere.
 
 ## 0.5.10 (2026-09-28)
