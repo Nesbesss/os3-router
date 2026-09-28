@@ -7,7 +7,7 @@ import json, os, sys, time, uuid
 
 a = sys.argv[1:]
 if "--version" in a:
-    print("codex-cli 0.0.0-fake")
+    print("codex-cli 9.9.9")  # newer than any minimum: the installer keeps it
     sys.exit(0)
 if a[:2] == ["features", "list"]:
     for f in ("computer_use", "multi_agent", "plugins", "shell_tool", "unified_exec"):  # sleep_tool unknown, like 0.151
