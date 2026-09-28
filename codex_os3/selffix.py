@@ -36,7 +36,9 @@ def update_codex(cfg):
         cmd = [npm, "install", "-g", "@openai/codex@latest"]
     before = ui_api.codex_info(cfg, fresh=True)["version"]
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=900, env=env)
+        # from the router's own folder: an installer swapping the app folder can delete the one this process
+        # started in, and npm then dies with "uv_cwd ENOENT" (seen on a real Mac, every 30 minutes for days)
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=900, env=env, cwd=config.HOME)
     except (OSError, subprocess.SubprocessError) as e:
         return False, f"{' '.join(cmd[1:])} failed: {e}"
     codex_runner._known.clear()  # its feature flags may have changed

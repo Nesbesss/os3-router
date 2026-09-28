@@ -208,6 +208,17 @@ StartupWMClass=os3-router
 """
 
 
+def _update_codex(cfg):
+    """selffix.update_codex, but after a failure not again for 6 hours: a broken npm was retried (and logged)
+    at every check, every 30 minutes, for days."""
+    from . import selffix
+    if time.time() - (store.kv_get("codex_update_failed") or 0) < 6 * 3600:
+        return
+    ok, msg = selffix.update_codex(cfg)
+    store.kv_set("codex_update_failed", 0 if ok else time.time())
+    store.event("codex_update", msg, source="updater", level="info" if ok else "warn")
+
+
 def maybe(cfg):
     """Called from the watchdog loop (one owner at a time)."""
     if not managed():
@@ -234,10 +245,8 @@ def maybe(cfg):
     if not cfg.get("auto_update", True):
         return
     if store.kv_get("codex_outdated"):  # Codex refused a model as too old: update it right away
-        from . import selffix
         store.kv_set("codex_outdated", None)
-        ok, msg = selffix.update_codex(cfg)
-        store.event("codex_update", msg, source="updater", level="info" if ok else "warn")
+        _update_codex(cfg)
     if store.kv_get("apps_version") != __version__:  # first run of this version: bring the apps along
         store.kv_set("apps_version", __version__)  # (done by the new version, whatever did the update)
         try:
@@ -251,15 +260,16 @@ def maybe(cfg):
     try:
         tag = latest()
         store.kv_set("update_latest", tag)
-        from . import selffix, ui_api
+        from . import ui_api
         v = ui_api.codex_info(cfg, fresh=True)["version"]
         if v and ver(v) < ver(ui_api.MIN_CODEX):
-            ok, msg = selffix.update_codex(cfg)
-            store.event("codex_update", msg, source="updater", level="info" if ok else "warn")
+            _update_codex(cfg)
         if ver(tag) <= ver(__version__):
             return
         store.event("update", f"installing {tag} (running {__version__})", source="updater")
         install(tag)
         store.event("update", f"{tag} installed, switching over", source="updater")
     except Exception as e:  # offline, GitHub down, tests failed: stay on this version
-        store.event("update_failed", f"{type(e).__name__}: {e}"[:300], source="updater", level="warn")
+        # a dropped connection (Wi-Fi, sleep) is not a problem to show; a refused download or a failed test is
+        blip = isinstance(e, (urllib.error.URLError, TimeoutError, ConnectionError)) and not isinstance(e, urllib.error.HTTPError)
+        store.event("update_failed", f"{type(e).__name__}: {e}"[:300], source="updater", level="info" if blip else "warn")

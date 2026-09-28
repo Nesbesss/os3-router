@@ -11,7 +11,7 @@ Rules decide; the optional Jev advisor (jev.py) only adds a second opinion for t
 ambiguous "is this silence expected?" case and is recorded alongside."""
 import json, os, time, urllib.request
 
-from . import config, jev, os3, platform_util, store
+from . import config, jev, os3, platform_util, roles, store
 from .notify import desktop
 
 TICK_S = 15
@@ -72,7 +72,11 @@ def rules(s):
     """-> list of findings {kind, level, msg, action}."""
     out = []
     resp, agent = s["last_response"], s["agent"]
-    waiting_for_os3 = (resp and resp["result"] == "tool_call"
+    # OS3's housekeeping calls (facts, memory, file signals) are one-shot: it never follows them up, so the silence
+    # after one is normal. On a real setup they were 58% of the "tunnel dead" and 81% of the "stalled" findings,
+    # and each false one restarted a healthy rabbit-agent.
+    one_shot = bool(resp) and bool(resp["calls"]) and set(resp["calls"]) <= roles.BACKGROUND_MARKERS
+    waiting_for_os3 = (resp and resp["result"] == "tool_call" and not one_shot
                        and (s["last_request_ago_s"] or 0) >= resp["ago_s"] - 2)  # nothing came in since
     if waiting_for_os3 and agent.get("running"):
         quick = not (set(resp["calls"]) & SLOW_TOOLS)
