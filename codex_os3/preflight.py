@@ -66,7 +66,7 @@ def preflight(argv):
     return 0
 
 
-def _call(cfg, path, post=False, timeout=15):
+def _call(cfg, path, post=False, timeout=60):  # (doctor runs several CLI checks: slow on a busy machine)
     req = urllib.request.Request(f"http://127.0.0.1:{cfg['port']}/api/{path}", method="POST" if post else "GET",
                                  data=b"{}" if post else None, headers={"X-Codex-OS3": "1", "Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=timeout) as r:

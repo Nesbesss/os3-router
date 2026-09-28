@@ -28,10 +28,11 @@ jobs:
           python3 -m codex_os3 reload
           python3 -m codex_os3 verify || true   # what the running service sees (Codex, sign-in, Claude)
           # installing again over the running router (an upgrade) keeps it running and leaves no rollback copy behind
-          CODEX_OS3_SRC="$GITHUB_WORKSPACE" bash "$GITHUB_WORKSPACE/install.sh" --no-wait
-          python3 -m codex_os3 status | grep "service: running"
+          cd "$GITHUB_WORKSPACE"   # (the installer replaces the app folder: don't stand in it)
+          CODEX_OS3_SRC="$GITHUB_WORKSPACE" bash install.sh --no-wait
+          cd ~/.codex-os3/app && python3 -m codex_os3 status | grep "service: running"
           test ! -d ~/.codex-os3/app.old
-          cd - && bash install.sh --uninstall --purge
+          cd "$GITHUB_WORKSPACE" && bash install.sh --uninstall --purge
   powershell:
     runs-on: windows-latest
     steps:
@@ -108,10 +109,11 @@ jobs:
           launchctl print "gui/$(id -u)/ai.codexos3.router" | head -12
           cd ~/.codex-os3/app && python3 -m codex_os3 status | grep "service: running"
           python3 -m codex_os3 verify || true
-          CODEX_OS3_SRC="$GITHUB_WORKSPACE" bash "$GITHUB_WORKSPACE/install.sh" --no-wait --no-app
-          python3 -m codex_os3 status | grep "service: running"
+          cd "$GITHUB_WORKSPACE"   # (the installer replaces the app folder: don't stand in it)
+          CODEX_OS3_SRC="$GITHUB_WORKSPACE" bash install.sh --no-wait --no-app
+          cd ~/.codex-os3/app && python3 -m codex_os3 status | grep "service: running"
           test ! -d ~/.codex-os3/app.old
-          bash "$GITHUB_WORKSPACE/install.sh" --uninstall --purge
+          cd "$GITHUB_WORKSPACE" && bash install.sh --uninstall --purge
   macos-app:
     runs-on: macos-latest
     steps:

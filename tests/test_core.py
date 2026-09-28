@@ -987,6 +987,7 @@ class SecondRouterTest(unittest.TestCase):
 
 
 class ClaudeFoundTest(unittest.TestCase):
+    @unittest.skipIf(sys.platform == "win32", "Windows has no login shell to ask")
     def test_found_by_login_shell(self):
         """An nvm/alias install is only known to the user's shell: ask it when the usual folders miss."""
         from codex_os3 import roles
