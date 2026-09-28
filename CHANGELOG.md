@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.5.2 (2026-09-28)
 - **Codex Max plan:** only the windows your plan has are shown. Max has a weekly limit and no 5-hour one, so you now see one weekly ring instead of an empty 5-hour ring. Rings, warnings and `codex-os3 status` are labelled 5-hour / daily / weekly / monthly.
 - **Codex Free plan:** when a model isn't included in your plan, the router runs the request on one that is (e.g. gpt-6-sol → gpt-6-luna) instead of replying "not included". It remembers this per account for a day, so an upgraded plan gets its models back by itself.
 
