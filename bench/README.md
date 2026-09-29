@@ -17,3 +17,10 @@ computer-use tasks on it at the same time. It is expensive in Codex quota (one r
    `python3 bench/bench.py reveal,textedit,calculator 2 gpt-6-luna`
 
 Results go to `bench/results.jsonl`, transcripts to `bench/transcripts/`, and screenshots to `bench/shots/`.
+
+## Comparing models' speed (`speed.py`)
+`python3 bench/speed.py gpt-6-sol gpt-6.1-sol` — a few small real Codex calls per model on this computer's login: seconds
+until the first words of a chat answer, until the answer is complete, and until a worker-style tool call arrives. It starts
+its own router on a spare port and doesn't touch the running one. A model the account can't use yet is reported as
+"not available", never timed as a slow one (the router quietly swaps in a model the plan has; the script checks which one
+really answered). Use `--runs 5` or more before believing a difference of a second or two.
