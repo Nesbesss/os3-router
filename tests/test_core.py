@@ -687,6 +687,18 @@ class UpdaterCertTest(unittest.TestCase):
         self.assertEqual(open_url.call_args.args[0].get_method(), "HEAD")
         response.close.assert_called_once_with()
 
+    def test_unauthorized_api_uses_latest_release_redirect(self):
+        import urllib.error
+        from codex_os3 import updater
+        unauthorized = urllib.error.HTTPError("https://api.github.com/", 401, "Unauthorized", {}, None)
+        response = mock.Mock()
+        response.geturl.return_value = "https://github.com/Nesbesss/os3-router/releases/tag/v0.5.13"
+        with mock.patch.object(updater, "_get", side_effect=unauthorized), \
+                mock.patch.object(updater.urllib.request, "urlopen", return_value=response) as open_url:
+            self.assertEqual(updater.latest(), "v0.5.13")
+        self.assertEqual(open_url.call_args.args[0].get_method(), "HEAD")
+        response.close.assert_called_once_with()
+
     def test_rate_limit_fallback_rejects_unexpected_redirect(self):
         import urllib.error
         from codex_os3 import updater

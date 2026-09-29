@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.5.14 (unreleased)
+- **Update checks can recover when GitHub rejects a public API request.** If the releases API responds with HTTP 401, the router now checks GitHub's public latest-release page instead of showing an update failure.
+
 ## 0.5.13 (2026-09-28)
 - **The router no longer restarts a healthy rabbit-agent after OS3's housekeeping calls.** After OS3 saves facts, memory or file notes it never calls the router back, and the router used to read that silence as a dead connection. On a real Mac this caused most of the "connection likely dead" and "no follow-up" warnings, and each false alarm restarted the agent, which sometimes came back disconnected. Silence after those calls is now normal; a real task that goes quiet is still watched.
 - **Updating Codex no longer fails again and again.** If updating the Codex CLI fails (a broken npm, no permission), the router now waits 6 hours before trying again instead of every 30 minutes, and runs the update from its own folder, which fixes the "uv_cwd ENOENT" failure seen after an installer replaced the folder it was started in.
