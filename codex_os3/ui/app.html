@@ -132,7 +132,7 @@ select { width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid
 .checks .t { flex: 1; } .checks .d { font-size: 13.5px; color: var(--ink-2); }
 .choice { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .choice button { text-align: left; padding: 18px; border-radius: 14px; border: 2px solid var(--line); background: var(--card); cursor: pointer; }
-.choice button:hover { border-color: var(--accent); } .choice small { display: block; color: var(--ink-3); margin-top: 4px; }
+.choice button:hover, .choice button.on { border-color: var(--accent); } .choice.stack { grid-template-columns: 1fr; } .choice small.ok { color: var(--good); } .choice small { display: block; color: var(--ink-3); margin-top: 4px; }
 .alert { border-radius: 12px; padding: 12px 14px; margin: 10px 0; }
 .alert.bad { background: var(--bad-soft); } .alert.good { background: var(--good-soft); } .alert.warn { background: var(--warn-soft); }
 textarea { width: 100%; padding: 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--soft); resize: vertical; }
@@ -558,6 +558,11 @@ function screens(o) {
         machine = o.steps.filter(x => x.id === "engine" || x.id === "node");
   const S = [
     {id: "welcome", title: "Connect OS3 to your router", body: `<p class="lead">This takes about two minutes. You add one connection in OS3 (the app or website), and this app checks every step for you.</p><p class="lead">Keep OS3 open next to this window.</p>`, next: "Start"},
+    {id: "engine", title: "Which AI do you want to use?", choose: true, body: `<p class="lead">The router runs OS3 on your own subscription. Pick the one you have (you can change this any time under <b>Models</b>).</p>
+      <div class="choice stack">${[["codex", "ChatGPT (Codex)", "Your ChatGPT plan, through the Codex app.", o.engines.codex],
+        ["claude", "Claude", "Your Claude plan, through Claude Code (the Claude desktop app's copy counts).", o.engines.claude],
+        ["both", "Both", "Use one, and the other takes over when it runs out of its limit.", null]].map(([id, name, what, e]) =>
+        `<button data-engine="${id}" class="${o.engines.choice === id ? "on" : ""}"><b>${name}</b><small>${what}</small>${e ? `<small class="${e.installed && e.logged_in ? "ok" : ""}">${!e.installed ? "Not found on this computer yet" : e.logged_in ? "Found on this computer, signed in ✓" : "Found on this computer, not signed in yet"}</small>` : ""}</button>`).join("")}</div>`},
     {id: "machine", title: "Check this computer", body: `<p class="lead">The router needs your AI subscription and the OS3 node on this computer.</p>${checks(machine)}`, ok: machine.every(x => x.state === "ok"), test: true},
     {id: "old", title: "Do you already have a connection?", body: `<p class="lead">Look in OS3 → Settings → <b>api keys</b>. Is there already a <b>Local model</b> connection?</p><div class="choice"><button data-old="0"><b>No, this is new</b><small>Nothing set up yet</small></button><button data-old="1"><b>Yes, I have one</b><small>From an earlier try</small></button></div>`, choose: true}];
   if (HASOLD) S.push({id: "delete", title: "Delete the old connection", body: `<p class="lead">In OS3: Settings → <b>api keys</b> → your <b>Local model</b> connection → scroll down → <b>delete connection</b>. Connections can't be edited, only replaced.</p>${shots([["0-delete"]])}`});
@@ -687,12 +692,14 @@ setInterval(() => { if (VIEW === "settings") refreshUpdates(); }, 10000);
 
 // ---------------------------------------------------------------- shared clicks
 document.addEventListener("click", async (e) => {
-  const t = e.target, g = t.closest("[data-go]"), goto = t.closest("[data-goto]"), cp = t.closest("[data-copy]"), fix = t.closest("[data-fix]"), img = t.closest(".shots img"), old = t.closest("[data-old]"), share = t.closest("[data-share]");
+  const t = e.target, g = t.closest("[data-go]"), goto = t.closest("[data-goto]"), cp = t.closest("[data-copy]"), fix = t.closest("[data-fix]"), img = t.closest(".shots img"), old = t.closest("[data-old]"), share = t.closest("[data-share]"), eng = t.closest("[data-engine]");
   if (g) { if (g.dataset.focus) window._focusReport = true; go(g.dataset.go); }
   else if (goto) { const v = goto.dataset.goto; if (v === "home") { WZ = "done"; go("home"); } else { const to = v === "delete" ? (HASOLD = true, screens(S.ob).findIndex(x => x.id === "delete")) : Number(v); DIR = typeof WZ === "number" && to < WZ ? "back" : "fwd"; WZ = to; render(true); $("#main").scrollTop = 0; } }
   else if (cp) copy(cp.dataset.copy);
   else if (img) { $("#lightbox img").src = img.src; $("#lightbox").hidden = false; }
   else if (old) { HASOLD = old.dataset.old === "1"; WZ = screens(S.ob).findIndex(x => x.id === "old") + 1; render(true); }
+  else if (eng) { try { await post("onboarding/engine", {choice: eng.dataset.engine}); await load(); } catch (err) { toast(err.message); return; }
+    DIR = "fwd"; WZ = screens(S.ob).findIndex(x => x.id === "engine") + 1; render(true); }
   else if (share) { await post("config", {share_reports: share.dataset.share === "1"}); toast(share.dataset.share === "1" ? "Thank you!" : "OK"); render(true); }
   else if (t.id === "runtest") { TEST = "run"; render(true); try { TEST = await post("selftest"); } catch (err) { TEST = {results: [{test: "Test", ok: false, detail: err.message}]}; } render(true); }
   else if (fix) { fix.disabled = true; fix.textContent = "Working…"; try { const r = await post("selffix/action", {id: fix.dataset.fix, args_json: fix.dataset.args || "{}"}); toast((r.ok ? "✓ " : "✗ ") + r.message); } catch (err) { toast(err.message); } render(true); }

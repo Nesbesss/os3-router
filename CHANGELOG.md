@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.14 (2026-09-29)
+- **Setup asks which AI you use: ChatGPT, Claude, or both.** The setup guide used to check only Codex, so someone who only has Claude was stuck on a red step, and nobody could pick Claude there. There is now a first question. It shows what it found on your computer, and after you choose, the guide checks only that one:
+  - **ChatGPT (Codex):** as before.
+  - **Claude:** Sonnet for chat and workers, Haiku for the background calls that run often. No Codex needed on the computer.
+  - **Both:** one is used, and the other takes over when it runs out of its limit.
+  Picking again later changes only what needs changing: models you chose yourself stay. You can still change everything under **Models**.
+- **The installers no longer stop when Codex isn't signed in.** If you only use Claude you can cancel the ChatGPT sign-in; the installer continues with a note, and the setup guide checks what you actually use.
+
 ## 0.5.13 (2026-09-28)
 - **The router no longer restarts a healthy rabbit-agent after OS3's housekeeping calls.** After OS3 saves facts, memory or file notes it never calls the router back, and the router used to read that silence as a dead connection. On a real Mac this caused most of the "connection likely dead" and "no follow-up" warnings, and each false alarm restarted the agent, which sometimes came back disconnected. Silence after those calls is now normal; a real task that goes quiet is still watched.
 - **Updating Codex no longer fails again and again.** If updating the Codex CLI fails (a broken npm, no permission), the router now waits 6 hours before trying again instead of every 30 minutes, and runs the update from its own folder, which fixes the "uv_cwd ENOENT" failure seen after an installer replaced the folder it was started in.
