@@ -618,6 +618,29 @@ class NewModelArrivesByItselfTest(unittest.TestCase):
         self.assertEqual(codex_runner.split_model("gpt-6.1-sol-high", "medium"), ("gpt-6.1-sol", "high"))   # (the dot is not an effort)
 
 
+class NewerCodexHintTest(unittest.TestCase):
+    """GPT-6.1 Sol on launch day: an account that HAS it was refused ("not supported when using Codex with a ChatGPT
+    account") by Codex 0.155.1 and accepted by 0.159.1. The router says so instead of leaving people to guess."""
+    def latest(self, installed, reply):
+        from codex_os3 import ui_api
+        store.kv_set("codex_latest", None)
+        with mock.patch.object(ui_api, "codex_info", return_value={"version": installed}), \
+                mock.patch("codex_os3.updater._get", side_effect=reply if isinstance(reply, Exception) else (lambda *a, **k: reply)):
+            return ui_api.codex_latest({})
+
+    def test_older_installed_codex_is_flagged(self):
+        r = self.latest("0.155.1", b'{"version": "0.159.1"}')
+        self.assertEqual((r["installed"], r["latest"], r["newer"]), ("0.155.1", "0.159.1", True))
+
+    def test_current_or_newer_is_not(self):
+        self.assertFalse(self.latest("0.159.1", b'{"version": "0.159.1"}')["newer"])
+        self.assertFalse(self.latest("0.161.0-alpha.2", b'{"version": "0.159.1"}')["newer"])   # (an alpha of a later release)
+
+    def test_no_answer_or_a_strange_one_says_nothing(self):
+        self.assertFalse(self.latest("0.155.1", OSError("offline"))["newer"])
+        self.assertFalse(self.latest("0.155.1", b'{"version": "0.1.2505172116-beta"}')["newer"])
+
+
 class CapacityTest(unittest.TestCase):
     def test_background_never_takes_the_last_place(self):
         import threading

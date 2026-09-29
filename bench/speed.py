@@ -23,7 +23,7 @@ SHELL_TOOL = {"type": "function", "function": {"name": "shell", "description": "
 
 
 def ask(cfg, model, kind, i):
-    """-> (first_words_s or None, total_s, error or None)"""
+    """-> (first_words_s or None, total_s, error or None, answer length)"""
     if kind == "chat":
         tools = [CHAT_TOOL]
         msgs = [{"role": "system", "content": "You are a helpful assistant."},
@@ -44,7 +44,7 @@ def ask(cfg, model, kind, i):
             continue
         d = json.loads(line[5:])
         if d.get("error"):
-            return None, time.time() - t0, str(d["error"].get("message", d["error"]))[:160]
+            return None, time.time() - t0, str(d["error"].get("message", d["error"]))[:160], 0
         ch = (d.get("choices") or [{}])[0].get("delta") or {}
         if ch.get("content"):
             text += ch["content"]
@@ -53,12 +53,12 @@ def ask(cfg, model, kind, i):
             called = True
     total = time.time() - t0
     if kind == "worker" and called:
-        return total, total, None
+        return total, total, None, 0
     if kind == "chat" and text:
         if text.lstrip().startswith("⚠"):  # the router's own notice ("not in your plan", "usage limit")
-            return None, total, text.strip()[:160]
-        return first, total, None
-    return None, total, (text.strip() or "no answer")[:160]
+            return None, total, text.strip()[:160], 0
+        return first, total, None, len(text)
+    return None, total, (text.strip() or "no answer")[:160], 0
 
 
 def main():
@@ -66,43 +66,56 @@ def main():
     ap.add_argument("models", nargs="+")
     ap.add_argument("--runs", type=int, default=3)
     ap.add_argument("--effort", default="medium")
+    ap.add_argument("--codex", help="path of the codex program to use (default: the one on PATH)")
+    ap.add_argument("--codex-home", help="which account's login to use (default: this computer's own)")
     a = ap.parse_args()
+    if a.codex_home:
+        os.environ["CODEX_HOME"] = os.path.expanduser(a.codex_home)
     home = tempfile.mkdtemp(prefix="os3-speed-")
     os.environ["CODEX_OS3_HOME"] = home
     sys.path.insert(0, os.path.dirname(HERE))
     from codex_os3 import codex_runner, config, server, store
     cfg = config.ensure_key()
-    config.save({"role_routing": False, "effort": a.effort, "stream_chat": True, "engine": "appserver", "port": PORT})
+    config.save({"role_routing": False, "effort": a.effort, "stream_chat": True, "engine": "appserver", "port": PORT,
+                 **({"codex_bin": a.codex} if a.codex else {})})
     srv = server.Server(("127.0.0.1", PORT))
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     time.sleep(0.4)
     cfg = config.load()
-    print(f"{a.runs} run(s) per model, effort {a.effort}, streamed like OS3 asks for it\n")
-    print(f"{'model':16} {'chat: first words':>18} {'chat: complete':>15} {'worker: tool call':>18}")
-    for model in a.models:
-        res = {}
-        for kind in ("chat", "worker"):
-            rows = []
-            for i in range(a.runs):
+    import subprocess
+    ver = subprocess.run([a.codex or "codex", "--version"], capture_output=True, text=True).stdout.strip()
+    print(f"{a.runs} run(s) per model, effort {a.effort}, streamed like OS3 asks for it, {ver}\n")
+    print(f"{'model':14} {'chat: first words':>22} {'chat: complete':>22} {'worker: tool call':>22}   answer length")
+    rows = {m: {"chat": [], "worker": []} for m in a.models}
+    lens = {m: [] for m in a.models}
+    bad = {}
+    for i in range(a.runs):                         # one run of every model before the next run: drift in the
+        for kind in ("chat", "worker"):             # servers' speed over the minutes hits every model alike
+            for model in a.models:
+                if model in bad:
+                    continue
                 config.save({"model": model})
-                first, total, err = ask(cfg, model, kind, i)
-                # the router turns a model the plan doesn't have into one it does (that is right for OS3, wrong for a
+                first, total, err, n = ask(cfg, model, kind, i)
+                # the router turns a model the plan doesn't have into one it does (right for OS3, wrong for a
                 # benchmark): the model that really answered is what the request row says
                 used = (store.q("SELECT model FROM requests ORDER BY id DESC LIMIT 1") or [{}])[0].get("model")
                 if not err and used and codex_runner.split_model(used, None)[0] != model:
                     err = f"the account doesn't have it: the router answered with {codex_runner.split_model(used, None)[0]} instead"
                 if err:
-                    rows = err
-                    break
-                rows.append((first, total))
-            res[kind] = rows
-        bad = next((v for v in res.values() if isinstance(v, str)), None)
-        if bad:
-            print(f"{model:16} not available on this account: {bad}")
+                    bad[model] = err
+                    continue
+                rows[model][kind].append((first, total))
+                if kind == "chat":
+                    lens[model].append(n)
+    rng = lambda xs: f"{st.median(xs):5.1f}s ({min(xs):.1f}-{max(xs):.1f})"
+    for model in a.models:
+        if model in bad:
+            print(f"{model:14} not available on this account: {bad[model]}")
             continue
-        med = lambda k, j: st.median(r[j] for r in res[k])
-        print(f"{model:16} {med('chat', 0):17.1f}s {med('chat', 1):14.1f}s {med('worker', 1):17.1f}s")
-    print("\nmedians. Different accounts and times of day differ: compare models in the same run.")
+        r = rows[model]
+        print(f"{model:14} {rng([x[0] for x in r['chat']]):>22} {rng([x[1] for x in r['chat']]):>22} "
+              f"{rng([x[1] for x in r['worker']]):>22}   ~{int(st.median(lens[model]))} chars")
+    print("\nmedian (lowest-highest). Different accounts and times of day differ: compare models in the same run.")
 
 
 if __name__ == "__main__":
