@@ -728,7 +728,7 @@ class WindowsProcessTest(unittest.TestCase):
                                return_value=mock.Mock(stdout="computer_use stable\n")) as run:
             self.assertEqual(codex_runner.known_features(codex), {"computer_use"})
         run.assert_called_once_with([codex, "features", "list"], capture_output=True,
-                                    text=True, timeout=30, creationflags=0x08000200)
+                                    text=True, timeout=30, cwd=codex_runner.config.HOME, creationflags=0x08000200)
         codex_runner._known.pop(codex, None)
 
 

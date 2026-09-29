@@ -60,9 +60,11 @@ def codex_info(cfg=None):
         return info
     try:
         # polled by the open app/dashboard: without no_window_kwargs each check flashes a console window on Windows
-        v = subprocess.run([b, "--version"], capture_output=True, text=True, timeout=15, **platform_util.no_window_kwargs())
+        # cwd: a folder that always exists. Started from one that was deleted (an installer replaced the app folder under a
+        # running worker) Codex says "Error loading configuration: No such file or directory" and looks signed out
+        v = subprocess.run([b, "--version"], capture_output=True, text=True, timeout=15, cwd=config.HOME, **platform_util.no_window_kwargs())
         info["version"] = (v.stdout or v.stderr).strip().split()[-1] if (v.stdout or v.stderr) else None
-        s = subprocess.run([b, "login", "status"], capture_output=True, text=True, timeout=15,
+        s = subprocess.run([b, "login", "status"], capture_output=True, text=True, timeout=15, cwd=config.HOME,
                            **platform_util.no_window_kwargs())
         out = (s.stdout + s.stderr).lower()
         info["logged_in"] = s.returncode == 0 and "not logged in" not in out
@@ -79,7 +81,7 @@ def claude_info(cfg):
     if not b:
         return info
     try:
-        s = subprocess.run([b, "auth", "status"], capture_output=True, text=True, timeout=20,
+        s = subprocess.run([b, "auth", "status"], capture_output=True, text=True, timeout=20, cwd=config.HOME,
                            **platform_util.no_window_kwargs())
         d = json.loads(s.stdout or "{}")
         info["logged_in"] = bool(d.get("loggedIn"))
