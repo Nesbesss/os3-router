@@ -33,7 +33,7 @@ DEFAULTS = {
     "no_sleep": False,       # opt in to preventing idle system sleep while the router runs
     "codex_images": True,     # workers create images with Codex's own image generation (no paid image provider)
     "engine": "auto",         # "appserver": one long-running codex (faster); "exec": one per request; auto = appserver except on Windows
-    "stream_chat": False,     # prototype, appserver only: stream the main chat's answer to OS3 as it's written
+    "stream_chat": True,      # appserver only (Mac/Linux, Codex): the main chat's answer goes to OS3 as it's written, not when done
     "compact_tokens": 0,      # prototype: codex summarizes a task's history above this many tokens (0 = its default)
     "fallback": {},           # role -> {model, effort} used while the role's subscription is at its limit
     "share_reports": None,    # anonymous problem reports to the developer: None = not asked yet

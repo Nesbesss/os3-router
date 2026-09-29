@@ -130,6 +130,7 @@ select { width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid
 .checks .i { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; color: #fff; font-size: 13px; font-weight: 700; flex: none; background: var(--ink-3); }
 .checks [data-s="ok"] .i { background: var(--good); } .checks [data-s="error"] .i { background: var(--bad); } .checks [data-s="waiting"] .i { background: var(--accent); }
 .checks .t { flex: 1; } .checks .d { font-size: 13.5px; color: var(--ink-2); }
+.speedrow { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 18px; } .speed { margin-bottom: 16px; } .good-t { color: var(--good); }
 .choice { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .choice button { text-align: left; padding: 18px; border-radius: 14px; border: 2px solid var(--line); background: var(--card); cursor: pointer; }
 .choice button:hover, .choice button.on { border-color: var(--accent); } .choice.stack { grid-template-columns: 1fr; } .choice small.ok { color: var(--good); } .choice small { display: block; color: var(--ink-3); margin-top: 4px; }
@@ -428,10 +429,22 @@ function ring(pct, reset, label) {
   return `<div class="ring"><svg viewBox="0 0 104 104" role="img" aria-label="${label}: ${pct == null ? "no data" : Math.round(pct) + "% used"}"><circle cx="52" cy="52" r="42" fill="none" stroke="var(--line)" stroke-width="10"/>${p ? "" : "<!-- empty -->"}<circle class="arc" cx="52" cy="52" r="42" fill="none" stroke="${col}" stroke-opacity="${p ? 1 : 0}" stroke-width="10" stroke-linecap="round" data-d="${C * p / 100} ${C}" stroke-dasharray="${FIRST ? "0 " + C : C * p / 100 + " " + C}" transform="rotate(-90 52 52)"/><text x="52" y="59" text-anchor="middle" class="pct">${pct == null || stale ? "–" : Math.round(pct) + "%"}</text></svg><div class="lbl">${label}</div><div class="rs">${pct == null ? "no data yet" : stale ? "has reset" : until(reset)}</div></div>`;
 }
 const VIEWS = {};
+// the chat's speed from what the router recorded itself: the last 24 h against the 7 days before
+function speedCard(sp) {
+  if (!sp || !sp.now.n) return "";
+  const a = sp.now, b = sp.before, sec = (v) => v == null ? "–" : v < 10 ? v.toFixed(1) + " s" : Math.round(v) + " s";
+  const delta = a.median_s != null && b.median_s != null && a.n >= 8 && b.n >= 8 ? Math.round(100 * (a.median_s - b.median_s) / b.median_s) : null;
+  const dtxt = delta == null ? "" : Math.abs(delta) < 5 ? "about the same as the week before" : delta < 0 ? `<b class="good-t">${-delta}% faster</b> than the week before` : `${delta}% slower than the week before`;
+  return `<div class="card speed"><h2>Speed · last 24 hours</h2><div class="speedrow">
+    <div><div class="bignum">${sec(a.median_s)}</div><div class="muted">a chat reply takes (typical)${dtxt ? "<br>" + dtxt : ""}</div></div>
+    ${a.first_s != null ? `<div><div class="bignum">${sec(a.first_s)}</div><div class="muted">until the first words appear<br>(answers are shown as they're written)</div></div>` : ""}
+    ${a.continued_pct != null ? `<div><div class="bignum">${a.continued_pct}%</div><div class="muted">of follow-up messages carried on where they left off${b.continued_pct != null && b.follow_n >= 8 ? `<br>(${b.continued_pct}% the week before)` : ""}</div></div>` : ""}
+    </div></div>`;
+}
 VIEWS.home = {async draw() {
   const st = S.status, h = heroState();
   const since = (Date.now() - new Date().setHours(0, 0, 0, 0)) / 3600000;
-  const [today, cfg, ms, ev] = await Promise.all([api("usage?hours=" + since), api("config"), MODELS.length ? MODELS : api("models"), api("events?limit=80")]);
+  const [today, cfg, ms, ev, spd] = await Promise.all([api("usage?hours=" + since), api("config"), MODELS.length ? MODELS : api("models"), api("events?limit=80"), api("speed").catch(() => null)]);
   MODELS = ms; CFG = cfg;
   const nm = (s) => (ms.find(m => m.slug === s) || {name: s}).name;
   const subs = Object.entries(st.limits_all || {});
@@ -440,6 +453,7 @@ VIEWS.home = {async draw() {
     <div class="hero ${h.cls}"><div class="ic"><svg viewBox="0 0 24 24">${ICON[h.icon]}</svg></div>
       <div class="grow"><h1>${h.title}</h1><p>${esc(h.text)}</p></div>
       ${h.btn ? `<button class="btn primary big" data-go="${h.btn[1]}">${h.btn[0]}</button>` : ""}</div>
+    ${speedCard(spd)}
     <div class="grid">
       ${(subs.length ? subs : [["codex", {}]]).map(([b, L]) => `<div class="card"><h2>${b === "claude" ? "Claude subscription" : b.startsWith("codex:") ? "ChatGPT · account " + esc(b.slice(6)) : "ChatGPT subscription"}</h2><div class="rings">${rings(L)}</div></div>`).join("")}
       <div class="card"><h2>Today</h2><div class="bignum">${fmtN(today.total.i)}</div><div class="muted">tokens read · ${today.total.n} requests from OS3 · ${fmtN(today.total.o)} written</div>
@@ -657,6 +671,7 @@ VIEWS.settings = {static: true, async draw() {
         <p class="muted" id="upmsg" role="status">Reading update status…</p></div>
       ${CFG.sleep_supported ? sw("no_sleep", "Prevent idle sleep while OS3 runs", "Keeps this computer awake while the router is running. The screen may turn off; closing a laptop lid or choosing Sleep still pauses OS3.") : ""}
       ${CFG.lid_supported ? `<label class="sw"><input type="checkbox" id="lidawake" ${CFG.lid_awake ? "checked" : ""}><span><b>Keep running with the lid closed</b><span class="muted">OS3 keeps working when you close this MacBook. macOS asks for your password to switch it on or off. The Mac really stays on, also in a bag, and uses battery: best on the charger.</span></span></label>` : ""}
+      ${sw("stream_chat", "Show answers as they're written", "OS3 shows a chat answer while the model is still writing it, so the first words appear sooner. Turn this off if answers ever look wrong. (ChatGPT / Codex on Mac and Linux.)")}
       ${sw("watchdog", "Watch over the OS3 node", "Restarts this computer's OS3 node when it gets stuck.")}
       ${sw("share_reports", "Share problem reports", "Anonymous notes to the developer when something breaks or gets fixed.")}</div>
     <div class="card" style="margin-top:16px"><h2>Connection details</h2>

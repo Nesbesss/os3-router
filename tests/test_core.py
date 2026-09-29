@@ -147,6 +147,78 @@ class Sessions(unittest.TestCase):
         sessions.done(k, None, rewritten, False)
 
 
+class ContinueByLastReply(unittest.TestCase):
+    """OS3 changes older messages between requests (shortens a result, swaps its context notes). The session is
+    still continued as long as our own last reply is the newest assistant message, with something new after it."""
+    sysm = {"role": "system", "content": "channel"}
+    first = {"role": "user", "content": "do it"}
+    snap = staticmethod(lambda t: {"role": "user", "content": f"<supplementary-context>{t}</supplementary-context>"})
+    call = {"role": "assistant", "content": None, "tool_calls": [{"id": "call_abc123", "type": "function",
+                                                                  "function": {"name": "shell", "arguments": "{}"}}]}
+
+    def stored(self, reply):
+        base = [self.sysm, self.first]
+        k = sessions.key(base, TOOLS)
+        m1 = base + [{"role": "assistant", "content": "earlier"}, {"role": "tool", "tool_call_id": "x", "content": "FULL RESULT " * 50}, self.snap(1)]
+        sessions.plan(k, m1)
+        sessions.done(k, "T1", m1, True, reply)
+        return k, base
+
+    def test_older_message_changed_but_our_reply_is_there(self):
+        k, base = self.stored(self.call)
+        m2 = base + [{"role": "assistant", "content": "earlier"}, {"role": "tool", "tool_call_id": "x", "content": "FULL RESULT [shortened]"},
+                     self.call, {"role": "tool", "tool_call_id": "call_abc123", "content": "done"}, self.snap(2)]
+        tracked, th, delta = sessions.plan(k, m2)
+        self.assertEqual((th, sessions.VIA.pop(k, None), len(delta)), ("T1", "anchor", 3))
+        self.assertIs(delta[0], self.call)
+        sessions.done(k, None, m2, False)
+
+    def test_plain_answer_is_found_by_its_text(self):
+        k, base = self.stored({"role": "assistant", "content": "All set.  "})
+        m2 = base + [{"role": "assistant", "content": "earlier (rewritten)"}, {"role": "assistant", "content": "All set."},
+                     {"role": "user", "content": "thanks, and?"}, self.snap(2)]
+        self.assertEqual(sessions.plan(k, m2)[1], "T1")
+        sessions.done(k, None, m2, False)
+
+    def test_not_continued_when_it_is_not_ours(self):
+        for label, tail in (("another assistant message is newer", [self.call, {"role": "assistant", "content": "someone else"}, self.snap(2)]),
+                            ("our reply is the last message (nothing new)", [self.call]),
+                            ("a different call", [dict(self.call, tool_calls=[{"id": "call_zzz", "type": "function", "function": {"name": "shell", "arguments": "{}"}}]), self.snap(2)])):
+            k, base = self.stored(self.call)
+            m2 = base + [{"role": "assistant", "content": "earlier (rewritten)"}] + tail
+            self.assertIsNone(sessions.plan(k, m2)[1], label)
+            sessions.done(k, None, m2, False)
+
+    def test_no_reply_stored_means_no_guessing(self):
+        k, base = self.stored(None)
+        m2 = base + [{"role": "assistant", "content": "changed"}, self.call, {"role": "tool", "tool_call_id": "call_abc123", "content": "done"}]
+        self.assertIsNone(sessions.plan(k, m2)[1])
+        sessions.done(k, None, m2, False)
+
+    def test_engine_resumes_and_says_so(self):
+        from codex_os3 import codex_runner, config, engine
+        seen = []
+
+        def run(cfg, prompt, model, schema, alive, images, resume, keep, **kw):
+            seen.append(resume)
+            return '{"kind":"tool_call","content":"","calls":[{"tool":"create_task","arguments_json":"{}"}]}', {}, "T-eng", None
+        tools = [{"type": "function", "function": {"name": "create_task", "parameters": {}}}]
+        cfg = dict(config.load(), engine="exec", role_routing=False)
+        base = [self.sysm, {"role": "user", "content": "engine anchor test"}]
+        with mock.patch.object(codex_runner, "run", side_effect=run):
+            hist = lambda text: [{"role": "assistant", "content": "earlier"}, {"role": "tool", "tool_call_id": "x", "content": text}]
+            t1 = engine.Turn(cfg, {"model": "gpt-6-luna", "messages": base + hist("FULL RESULT " * 40) + [self.snap(1)], "tools": tools}, lambda: True)
+            reply, _ = t1.run()
+            older = hist("FULL RESULT [shortened by OS3]")                          # an older message that is not the same any more
+            t2 = engine.Turn(cfg, {"model": "gpt-6-luna", "tools": tools, "messages": base + older + [reply,
+                             {"role": "tool", "tool_call_id": reply["tool_calls"][0]["id"], "content": "ok"}, self.snap(2)]}, lambda: True)
+            t2.run()
+        self.assertEqual(seen, [None, "T-eng"])
+        row = store.q("SELECT mode FROM requests WHERE id=?", (t2.rid,))[0]
+        self.assertEqual(row["mode"], "resume·anchor")
+        sessions.done(t2.task, None, [], False)
+
+
 class Roles(unittest.TestCase):
     def body(self, tools, system="You are an assistant."):
         return {"tools": [{"type": "function", "function": {"name": n}} for n in tools],
@@ -451,6 +523,59 @@ class SetupChoiceTest(unittest.TestCase):
             self.assertEqual(ui_api.handle("POST", "onboarding/engine", {"choice": "claude"}, {}, config.load())[0], 200)
             self.assertEqual(config.load()["roles"]["chat"]["model"], "claude-sonnet-5-5")
             self.assertEqual(ui_api.handle("POST", "onboarding/engine", {"choice": "x"}, {}, config.load())[0], 400)
+
+
+class SpeedNumbersTest(unittest.TestCase):
+    def test_the_speed_card_reads_what_was_recorded(self):
+        from codex_os3 import ui_api
+        store._w("DELETE FROM requests")
+        now = time.time()
+
+        def add(ts, secs, mode, task, first=None, role="chat", status="ok"):
+            rid = store.request_start(task, "127.0.0.1", "gpt-6-luna-medium", True, 1, 2, 10, role)
+            store._w("UPDATE requests SET ts=?, done_ts=?, mode=?, status=?, first_ts=?, in_tok=100, cached_tok=60 WHERE id=?",
+                     (ts, ts + secs, mode, status, ts + first if first else None, rid))
+        for i in range(10):                                   # this week: continued follow-ups, streamed, quick
+            add(now - 3600 - i * 60, 6.0, "fresh" if i == 9 else "resume", "t-now", first=2.0 if i % 2 == 0 else None)
+        for i in range(10):                                   # the week before: everything started over, slower
+            add(now - 3 * 86400 - i * 60, 10.0, "fresh", "t-old")
+        add(now - 600, 99, "fresh", "t-x", role="worker")     # not chat: not counted
+        add(now - 500, 99, "fresh", "t-y", status="limit")    # not answered: not counted
+        sp = ui_api.speed(24)
+        a, b = sp["now"], sp["before"]
+        self.assertEqual((a["n"], a["median_s"], a["first_s"], a["n_first"]), (10, 6.0, 2.0, 5))
+        self.assertEqual((a["follow_n"], a["continued_pct"]), (9, 100))     # the first of a conversation is not a follow-up
+        self.assertEqual((b["n"], b["median_s"], b["continued_pct"], b["first_s"]), (10, 10.0, 0, None))
+        self.assertEqual(a["cached_pct"], 60)
+        store._w("DELETE FROM requests")
+
+
+class CapacityTest(unittest.TestCase):
+    def test_background_never_takes_the_last_place(self):
+        import threading
+        from codex_os3 import codex_runner as C
+        with mock.patch.object(C, "_slots", None), mock.patch.object(C, "_bg", None), mock.patch.object(C, "_bg_n", None):
+            cfg = {"max_codex": 3}
+            alive = lambda: True
+            bg = [C.take(cfg, "background", alive), C.take(cfg, "background", alive)]   # two of three places
+            got = []
+            def third():
+                try:
+                    got.append(C.take(cfg, "background", lambda: bool(time.sleep(0.05)) or time.time() < t0 + 0.6))
+                except C.ClientGone:
+                    pass                                   # gave up waiting, as a cancelled request does
+            t0 = time.time()
+            t = threading.Thread(target=third)
+            t.start()
+            chat = C.take(cfg, "chat", alive)             # the last place is still there for a chat message
+            self.assertTrue(callable(chat))
+            t.join(3)
+            self.assertFalse(got)                         # a third background call did not get one (it gave up waiting)
+            for r in bg + [chat]:
+                r()
+            again = [C.take(cfg, "worker", alive) for _ in range(3)]   # all three are free again: nothing leaked
+            for r in again:
+                r()
 
 
 class AppServerStartTest(unittest.TestCase):

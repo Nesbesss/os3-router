@@ -167,6 +167,7 @@ class Turn:
     tools = ()
     stream_sink = None  # set by the server for a streamed request: receives answer text as it's written
     streamed = ""
+    first_out = None  # when the first words of a streamed answer went out
 
     def codex(self, prompt, images=(), resume=None, keep=False, stream=False):
         runner, extra = (claude_runner if self.backend == "claude" else codex_runner), {}
@@ -177,7 +178,7 @@ class Turn:
         if self.backend == "codex" and engine_of(self.cfg) == "appserver":  # one long-running codex
             runner = appserver
             if stream and self.stream_sink and not self.streamed and self.role == "chat" and not self.forced \
-                    and self.cfg.get("stream_chat"):
+                    and self.cfg.get("stream_chat") and not P.used_computer(self.msgs):  # (no later "verify" rewrite)
                 names = [t.get("function", t).get("name", "") for t in self.tools]
                 cs = P.ContentStream(self._stream, lambda t: not P.claims_unavailable(t, names) and not P.claims_not_found(t))
                 extra["on_text"] = cs.feed  # add to the options: replacing them lost the account
@@ -194,6 +195,8 @@ class Turn:
         return text, thread
 
     def _stream(self, text):
+        if not self.streamed:
+            self.first_out = time.time()
         self.streamed += text
         self.stream_sink(text)
 
@@ -278,6 +281,7 @@ class Turn:
         tools = self.tools
         self.tracked, thread, delta = (sessions.plan(self.task, self.msgs)
                                        if tools and self.msgs else (False, None, None))
+        via = sessions.VIA.pop(self.task, None) if self.task else None  # continued by finding our own last reply
         images, prompt = self.build(full=not thread, delta=delta)
         if not prompt:
             if self.tracked:
@@ -298,7 +302,7 @@ class Turn:
             sub = self.plan_model()  # a model this account's plan refused earlier
             if sub:
                 self.model = sub
-        mode = "resume" if thread else "fresh"
+        mode = "fresh" if not thread else "resume·anchor" if via else "resume"
         ok, status = False, "error"
         try:
             try:
@@ -339,6 +343,7 @@ class Turn:
             if tools:
                 raw = self._raw = self.corrections(raw, prompt, images)
             msg, finish = self.to_message(raw)
+            self._reply = msg  # what the next request should find again (sessions.find_anchor)
             ok, status = True, "ok"
             return msg, finish
         except UsageLimit as e:
@@ -369,10 +374,10 @@ class Turn:
             raise EngineError(str(e)) from e
         finally:
             if self.tracked:  # success stores the thread; failure drops it (next turn starts fresh)
-                sessions.done(self.task, self.tid, self.msgs, ok)
+                sessions.done(self.task, self.tid, self.msgs, ok, getattr(self, "_reply", None) if ok else None)
             if status != "error":
                 store.request_end(self.rid, status=status, mode=mode + ("·fallback" if self.fell_back and mode != "fallback" else ""),
-                                  imgs=len(images.files), model=self.model, **self._result_fields())
+                                  imgs=len(images.files), model=self.model, first_ts=self.first_out, **self._result_fields())
             self.capture(prompt, getattr(self, "_raw", None))
 
     def corrections(self, raw, prompt, images):

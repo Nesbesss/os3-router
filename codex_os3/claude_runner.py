@@ -4,7 +4,7 @@ signature and return value as codex_runner.run."""
 import base64, json, os, re, time
 
 from . import platform_util
-from .codex_runner import WORKDIR, ClientGone, SignedOut, UsageLimit, _supervise, idle_limit, slots, split_model
+from .codex_runner import WORKDIR, SignedOut, UsageLimit, _supervise, idle_limit, split_model, take
 
 SYSTEM = ("You are the decision engine of an app. The app runs the tools listed in the prompt and "
           "sends you their results. Answer only through the structured output.")
@@ -75,16 +75,13 @@ def run(cfg, prompt, model, schema=None, alive=lambda: True, images=(), resume=N
     RuntimeError."""
     os.makedirs(WORKDIR, exist_ok=True)
     cmd = build_cmd(cfg, model, schema, resume, keep)
-    sem = slots(cfg["max_codex"])
-    while not sem.acquire(timeout=2):
-        if not alive():
-            raise ClientGone()
+    release = take(cfg, role, alive)
     try:
         idle = idle_limit(cfg, split_model(model, cfg["effort"])[1], role)
         out, err, thread = _supervise(dict(cfg, hang_idle_s=idle), cmd, message(prompt, images), alive, resume,
                                       cwd=WORKDIR, final=lambda line: '"type":"result"' in line, env=environ(cmd[0]))
     finally:
-        sem.release()
+        release()
 
     result, rl, info = None, None, {}
     for line in out:
