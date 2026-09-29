@@ -59,10 +59,10 @@ def latest():
     try:
         return json.loads(_get(f"https://api.github.com/repos/{REPO}/releases/latest", 20))["tag_name"]
     except urllib.error.HTTPError as e:
-        if e.code != 403:
+        if e.code not in (401, 403):
             raise
-        # Unauthenticated GitHub API checks can exhaust the shared IP's hourly quota.
-        # The public latest-release redirect is not subject to that API quota.
+        # An unauthenticated API request can be rejected or hit the shared IP's quota.
+        # The public latest-release redirect does not require GitHub API access.
         url = f"https://github.com/{REPO}/releases/latest"
         _, final_url = _request(url, timeout=20, method="HEAD")
         final = urllib.parse.urlparse(final_url)
