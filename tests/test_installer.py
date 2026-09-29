@@ -1,6 +1,6 @@
 """The pieces the installers rely on: a usable port, the Claude lookup, the running service's view, and the
 loopback-Host rule that keeps a web page from reaching the local dashboard (DNS rebinding)."""
-import os, socket, sys, tempfile, unittest
+import contextlib, io, os, socket, sys, tempfile, unittest
 from types import SimpleNamespace
 from unittest import mock
 
@@ -83,12 +83,14 @@ class VerifyTest(unittest.TestCase):
 class VerifyWaitsForTheSwapTest(unittest.TestCase):
     def test_a_failure_right_after_an_update_is_looked_at_again(self):
         answers = [[(False, "Codex logged in: Error loading configuration")], [(False, "still")], [(True, "Codex logged in")]]
-        with mock.patch.object(preflight, "verify_checks", side_effect=lambda *a, **k: answers.pop(0)) as vc:
+        with mock.patch.object(preflight, "verify_checks", side_effect=lambda *a, **k: answers.pop(0)) as vc, \
+                contextlib.redirect_stdout(io.StringIO()):   # (a Windows console can't print the check marks)
             self.assertEqual(preflight.verify([], sleep=lambda s: None), 0)
         self.assertEqual(vc.call_count, 3)
 
     def test_a_real_problem_is_still_reported(self):
-        with mock.patch.object(preflight, "verify_checks", return_value=[(False, "Codex is not signed in")]) as vc:
+        with mock.patch.object(preflight, "verify_checks", return_value=[(False, "Codex is not signed in")]) as vc, \
+                contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(preflight.verify([], sleep=lambda s: None), 1)
         self.assertEqual(vc.call_count, 4)                         # once, and three more looks
 
