@@ -241,6 +241,16 @@ def handle(method, path, data, q, cfg):
     if method == "GET" and path == "onboarding":
         from . import onboarding
         return 200, onboarding.status(cfg), J
+    if method == "POST" and path == "onboarding/engine":  # the wizard's "which AI do you use": ChatGPT, Claude or both
+        from . import onboarding
+        try:
+            upd = onboarding.apply_choice(cfg, str(data.get("choice", "")))
+        except ValueError as e:
+            return 400, {"error": str(e)}, J
+        upd["roles"], upd["fallback"] = clean_roles(upd["roles"]), clean_roles(upd["fallback"])
+        config.save(upd)
+        store.event("config", f"setup: using {data['choice']}", source="ui")
+        return 200, {"ok": True}, J
     if method == "POST" and path == "selffix":
         from . import selffix
         return 200, selffix.diagnose(cfg, str(data.get("problem", "")), str(data.get("step", ""))), J

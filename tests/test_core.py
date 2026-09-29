@@ -394,6 +394,65 @@ class CodexUpdatePauseTest(unittest.TestCase):
         self.assertEqual(run.call_args.kwargs["cwd"], config.HOME)
 
 
+class SetupChoiceTest(unittest.TestCase):
+    """The wizard asks which AI you use and then checks only that one (it used to insist on Codex)."""
+    def cfg(self, **kw):
+        from codex_os3 import config
+        return dict(config.DEFAULTS, **kw)
+
+    def apply(self, cfg, which):
+        from codex_os3 import onboarding
+        return dict(cfg, **onboarding.apply_choice(cfg, which))
+
+    def test_choices_set_the_routing(self):
+        from codex_os3 import onboarding as O
+        c = self.apply(self.cfg(), "claude")
+        self.assertEqual({k: v["model"] for k, v in c["roles"].items()},
+                         {"chat": "claude-sonnet-5-5", "worker": "claude-sonnet-5-5", "background": "claude-haiku-4-5"})
+        self.assertEqual((O.choice(c), O.backends(c)), ("claude", {"claude"}))
+        b = self.apply(self.cfg(), "both")
+        self.assertEqual(O.choice(b), "both")
+        self.assertTrue(all(b["fallback"][k]["model"].startswith("claude") for k in O.ROLE_KEYS))
+        back = self.apply(self.apply(c, "both"), "codex")   # Claude -> both -> ChatGPT: nothing of Claude left behind
+        self.assertEqual((O.choice(back), back["fallback"]), ("codex", {}))
+        with self.assertRaises(ValueError):
+            O.apply_choice(self.cfg(), "gemini")
+
+    def test_own_picks_survive(self):
+        mine = self.cfg(roles={"chat": {"model": "gpt-6-sol", "effort": "high"}, "worker": {"model": "claude-opus-5-5", "effort": "high"},
+                               "background": {"model": "gpt-6-luna", "effort": "low"}})
+        c = self.apply(mine, "claude")
+        self.assertEqual((c["roles"]["worker"]["model"], c["roles"]["worker"]["effort"]), ("claude-opus-5-5", "high"))
+        b = self.apply(mine, "both")
+        self.assertEqual(b["roles"]["chat"], {"model": "gpt-6-sol", "effort": "high"})
+        self.assertTrue(b["fallback"]["chat"]["model"].startswith("claude") and b["fallback"]["worker"]["model"].startswith("gpt"))
+
+    def test_only_the_chosen_subscription_is_checked(self):
+        """A Claude-only setup passes without Codex on the machine; one that needs Codex still fails without it."""
+        from codex_os3 import onboarding as O, ui_api
+        gone = {"path": None, "version": None, "logged_in": None}
+        claude_ok = {"path": "/x/claude", "logged_in": True, "detail": ""}
+        with mock.patch.object(ui_api, "codex_info", return_value=gone), mock.patch.object(ui_api, "claude_info", return_value=claude_ok):
+            self.assertEqual(O.engine_step(self.apply(self.cfg(), "claude"))["state"], "ok")
+            s = O.engine_step(self.cfg())
+            self.assertEqual(s["state"], "error")
+            self.assertIn("Codex CLI", s["detail"])
+        with mock.patch.object(ui_api, "claude_info", return_value={"path": None, "logged_in": None, "detail": ""}), \
+                mock.patch.object(ui_api, "codex_info", return_value={"path": "/x/codex", "version": "9.9.9", "logged_in": True}):
+            s = O.engine_step(self.apply(self.cfg(), "claude"))
+            self.assertEqual(s["state"], "error")
+            self.assertIn("Claude Code isn't installed", s["detail"])
+            self.assertEqual(O.engine_step(self.cfg())["state"], "ok")     # ChatGPT users aren't asked about Claude
+
+    def test_endpoint_saves_the_choice(self):
+        from codex_os3 import config, ui_api
+        with tempfile.TemporaryDirectory() as home, mock.patch.object(config, "HOME", home), \
+                mock.patch.object(config, "PATH", os.path.join(home, "config.json")), mock.patch.object(ui_api.store, "event"):
+            self.assertEqual(ui_api.handle("POST", "onboarding/engine", {"choice": "claude"}, {}, config.load())[0], 200)
+            self.assertEqual(config.load()["roles"]["chat"]["model"], "claude-sonnet-5-5")
+            self.assertEqual(ui_api.handle("POST", "onboarding/engine", {"choice": "x"}, {}, config.load())[0], 400)
+
+
 class AppServerStartTest(unittest.TestCase):
     def test_codex_that_fails_to_initialise_is_not_left_running(self):
         from codex_os3 import appserver

@@ -175,9 +175,11 @@ if ($loginStatus -ne 0) {
         if ($env:SSH_CONNECTION) { & $Codex login --device-auth } else { & $Codex login }  # over SSH: a link + code instead of a browser
         & $Codex login status *> $null; $loginStatus = $LASTEXITCODE
     } finally { $ErrorActionPreference = $prevEap }
-    if ($loginStatus -ne 0) { Die "Codex isn't signed in (the sign-in was cancelled or timed out): re-run to try again" }
+    # not fatal: someone who only uses Claude cancels this on purpose. The app's setup asks which one you use and
+    # checks only that one; ChatGPT users see the same problem there with the fix.
+    if ($loginStatus -ne 0) { Warn "Codex isn't signed in (cancelled or timed out)"; Note "fine if you will only use Claude; otherwise run: codex login" }
 }
-Ok "signed in to ChatGPT"
+if ($loginStatus -eq 0) { Ok "signed in to ChatGPT" }
 
 
 # --- code ------------------------------------------------------------------------------

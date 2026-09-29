@@ -223,9 +223,11 @@ if ! "$CODEX" login status >/dev/null 2>&1; then
     note "your browser opens: sign in with the ChatGPT account whose plan the router should use"
     tty_in "$CODEX" login || true
   fi
-  "$CODEX" login status >/dev/null 2>&1 || die "Codex isn't signed in (the sign-in was cancelled or timed out): re-run to try again"
+  # not fatal: someone who only uses Claude cancels this on purpose. The app's setup asks which one you use and
+  # checks only that one; ChatGPT users see the same problem there with the fix.
+  "$CODEX" login status >/dev/null 2>&1 || { warn "Codex isn't signed in (cancelled or timed out)"; note "fine if you'll only use Claude; otherwise run: $CODEX login"; }
 fi
-ok "signed in to ChatGPT"
+"$CODEX" login status >/dev/null 2>&1 && ok "signed in to ChatGPT"
 
 fi
 
