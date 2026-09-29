@@ -25,6 +25,54 @@ def key(messages, tools):
 
 _busy = set()
 _lock = threading.Lock()
+VIA = {}  # task -> "anchor" when the last plan() continued a conversation by finding our own last reply
+
+
+def _text(content):
+    if isinstance(content, list):
+        content = " ".join(p.get("text", "") for p in content if isinstance(p, dict))
+    return content.strip() if isinstance(content, str) else ""
+
+
+def anchor_of(reply):
+    """How to find our own last reply in OS3's next request: the ids of the tool calls we made (random, so unique
+    everywhere), or, for a plain answer, a hash of its text."""
+    if not isinstance(reply, dict):
+        return None
+    ids = [c.get("id") for c in reply.get("tool_calls") or [] if c.get("id")]
+    if ids:
+        return {"ids": ids}
+    text = _text(reply.get("content"))
+    return {"text": h(text)} if text else None
+
+
+def find_anchor(messages, anchor):
+    """Index of the newest assistant message if it is our last reply, else None. Everything before it is what the
+    session already holds, whatever OS3 has since done to those older messages (shortened a result, dropped an
+    image, changed its context notes): the only thing that has to be true is that our own answer is still the
+    newest one, followed by something new."""
+    if not anchor:
+        return None
+    for i in range(len(messages) - 1, 1, -1):  # 0 and 1 are the system prompt and the task: the key already covers them
+        m = messages[i]
+        if m.get("role") != "assistant":
+            continue
+        if "ids" in anchor:
+            have = {c.get("id") for c in m.get("tool_calls") or []}
+            ok = bool(have) and set(anchor["ids"]) <= have
+        else:
+            ok = h(_text(m.get("content"))) == anchor.get("text")
+        return i if ok and i + 1 < len(messages) else None
+    return None
+
+
+def _note_miss(k, s, known, hashes, messages):
+    """Why a follow-up could not continue its session: only sizes and roles, never content."""
+    prior = [x.removeprefix("u:") for x in known]
+    p = next((i for i, (a, b) in enumerate(zip(prior, hashes)) if a != b), min(len(prior), len(hashes)))
+    store.event("session_miss", f"kept {len(prior)} messages, now {len(hashes)}; the same for the first {p}", task=k, source="sessions",
+                data={"kept": len(prior), "now": len(hashes), "same_prefix": p, "had_anchor": bool(s.get("anchor")),
+                      "role_at_change": messages[p].get("role") if p < len(messages) else None})
 
 
 def plan(k, messages):
@@ -43,17 +91,22 @@ def plan(k, messages):
             return True, s["thread"], messages[len(known):]
         if known and known[-1].startswith("u:") and len(hashes) >= len(known) and hashes[:len(known) - 1] == known[:-1]:
             return True, s["thread"], messages[len(known) - 1:]  # the old trailing user message was replaced
+        a = find_anchor(messages, json.loads(s["anchor"]) if s.get("anchor") else None)
+        if a is not None:  # OS3 changed something in the older messages, but our last reply is right where we left it
+            VIA[k] = "anchor"
+            return True, s["thread"], messages[a:]
+        _note_miss(k, s, known, hashes, messages)
     return True, None, None
 
 
-def done(k, thread, messages, ok):
+def done(k, thread, messages, ok, reply=None):
     with _lock:
         _busy.discard(k)
     if ok and thread:
         hashes = [h(m) for m in messages]
         if messages and messages[-1].get("role") == "user":
             hashes[-1] = "u:" + hashes[-1]
-        store.session_put(k, thread, hashes)
+        store.session_put(k, thread, hashes, anchor_of(reply))
     elif not ok:
         store.session_drop(k)
 

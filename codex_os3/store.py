@@ -11,7 +11,7 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS requests (
   id INTEGER PRIMARY KEY, ts REAL, done_ts REAL, task TEXT, source TEXT, model TEXT,
   stream INT, tools INT, msgs INT, bytes INT, imgs INT, mode TEXT, status TEXT, error TEXT,
-  result TEXT, calls TEXT, in_tok INT, cached_tok INT, out_tok INT, reason_tok INT, role TEXT);
+  result TEXT, calls TEXT, in_tok INT, cached_tok INT, out_tok INT, reason_tok INT, role TEXT, first_ts REAL);
 CREATE INDEX IF NOT EXISTS req_ts ON requests(ts);
 CREATE INDEX IF NOT EXISTS req_task ON requests(task);
 CREATE TABLE IF NOT EXISTS limits (
@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS limits (
 CREATE TABLE IF NOT EXISTS events (
   id INTEGER PRIMARY KEY, ts REAL, task TEXT, source TEXT, kind TEXT, level TEXT, msg TEXT, data TEXT);
 CREATE INDEX IF NOT EXISTS ev_ts ON events(ts);
-CREATE TABLE IF NOT EXISTS sessions (key TEXT PRIMARY KEY, thread TEXT, hashes TEXT, used REAL);
+CREATE TABLE IF NOT EXISTS sessions (key TEXT PRIMARY KEY, thread TEXT, hashes TEXT, used REAL, anchor TEXT);
 CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT);
 """
 
@@ -43,6 +43,10 @@ def db():
                     c.execute("ALTER TABLE requests ADD COLUMN role TEXT")
                 if "backend" not in {r[1] for r in c.execute("PRAGMA table_info(limits)")}:  # before 0.2.0
                     c.execute("ALTER TABLE limits ADD COLUMN backend TEXT DEFAULT 'codex'")
+                if "first_ts" not in cols:  # before 0.6.0: when the first words of a streamed answer went out
+                    c.execute("ALTER TABLE requests ADD COLUMN first_ts REAL")
+                if "anchor" not in {r[1] for r in c.execute("PRAGMA table_info(sessions)")}:  # before 0.6.0
+                    c.execute("ALTER TABLE sessions ADD COLUMN anchor TEXT")
                 break
             except sqlite3.OperationalError:
                 time.sleep(0.2 * (attempt + 1))
@@ -72,7 +76,7 @@ def request_end(rid, **f):
     if isinstance(f.get("calls"), (list, tuple)):
         f["calls"] = json.dumps(f["calls"])
     keys = [k for k in f if k in ("done_ts", "imgs", "mode", "status", "error", "result", "calls", "model",
-                                  "in_tok", "cached_tok", "out_tok", "reason_tok")]
+                                  "in_tok", "cached_tok", "out_tok", "reason_tok", "first_ts")]
     _w(f"UPDATE requests SET {','.join(k + '=?' for k in keys)} WHERE id=?",
        [f[k] for k in keys] + [rid])
 
@@ -137,8 +141,9 @@ def session_get(key):
     return r[0] if r else None
 
 
-def session_put(key, thread, hashes):
-    _w("INSERT OR REPLACE INTO sessions VALUES(?,?,?,?)", (key, thread, json.dumps(hashes), time.time()))
+def session_put(key, thread, hashes, anchor=None):
+    _w("INSERT OR REPLACE INTO sessions(key, thread, hashes, used, anchor) VALUES(?,?,?,?,?)",
+       (key, thread, json.dumps(hashes), time.time(), json.dumps(anchor) if anchor else None))
 
 
 def session_drop(key):
