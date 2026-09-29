@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.0 (2026-09-29)
+A faster router. We measured a real router first (5,000+ requests) to see where the waiting is, and fixed what showed up.
+- **Answers start appearing about 3 seconds sooner.** A chat answer is now shown while it is still being written, not after it is finished. In our test with a 150-word answer the first words came after 4.4 s instead of 7.7 s. This is for ChatGPT (Codex) on Mac and Linux; replies that are actions, not text, arrive whole as before. You can turn it off in **Settings**.
+- **Follow-up messages carry on where they left off, far more often.** On the real router, 6 in 10 follow-ups started the whole conversation over: 11 s instead of 8 s, and about 50% more of your ChatGPT limit used. The router now finds its own last reply in OS3's next message even when OS3 has changed older messages, and carries on from there.
+- **Chat never waits behind background work.** OS3's memory and review calls can take a while; they can no longer take the last free place. On the real router a chat reply took 16 s instead of 10 s while three other calls were running.
+- **A Speed card on Home** shows how quickly chat replies come, how long until the first words appear, and how many follow-ups carry on, against the week before, from what your own router recorded.
+
 ## 0.5.14 (2026-09-29)
 - **Setup asks which AI you use: ChatGPT, Claude, or both.** The setup guide used to check only Codex, so someone who only has Claude was stuck on a red step, and nobody could pick Claude there. There is now a first question. It shows what it found on your computer, and after you choose, the guide checks only that one:
   - **ChatGPT (Codex):** as before.

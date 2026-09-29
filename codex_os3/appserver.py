@@ -7,7 +7,7 @@ import json, os, queue, subprocess, tempfile, threading, time
 
 from . import accounts, platform_util, sessions, store
 from .codex_runner import (DISABLED, PLAN_RE, RESET_RE, WORKDIR, ClientGone, CodexHung, SignedOut, UsageLimit, idle_limit,
-                           known_features, slots, split_model)
+                           known_features, split_model, take)
 
 _EOF = {"method": "__eof__"}
 
@@ -151,10 +151,7 @@ def run(cfg, prompt, model, schema=None, alive=lambda: True, images=(), resume=N
         f.write(data)
         f.close()
         tmp.append(f.name)
-    sem = slots(cfg["max_codex"])
-    while not sem.acquire(timeout=2):
-        if not alive():
-            raise ClientGone()
+    release = take(cfg, role, alive)
     try:
         srv = server(cfg, account, image_gen)
         base = {"model": slug, "cwd": WORKDIR, "sandbox": "read-only", "approvalPolicy": "never"}
@@ -257,7 +254,7 @@ def run(cfg, prompt, model, schema=None, alive=lambda: True, images=(), resume=N
             raise RuntimeError(msg)
         return text, usage, tid, _limits(srv.rate_limits())
     finally:
-        sem.release()
+        release()
         for f in tmp:
             try:
                 os.unlink(f)

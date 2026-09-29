@@ -60,9 +60,11 @@ def codex_info(cfg=None):
         return info
     try:
         # polled by the open app/dashboard: without no_window_kwargs each check flashes a console window on Windows
-        v = subprocess.run([b, "--version"], capture_output=True, text=True, timeout=15, **platform_util.no_window_kwargs())
+        # cwd: a folder that always exists. Started from one that was deleted (an installer replaced the app folder under a
+        # running worker) Codex says "Error loading configuration: No such file or directory" and looks signed out
+        v = subprocess.run([b, "--version"], capture_output=True, text=True, timeout=15, cwd=config.HOME, **platform_util.no_window_kwargs())
         info["version"] = (v.stdout or v.stderr).strip().split()[-1] if (v.stdout or v.stderr) else None
-        s = subprocess.run([b, "login", "status"], capture_output=True, text=True, timeout=15,
+        s = subprocess.run([b, "login", "status"], capture_output=True, text=True, timeout=15, cwd=config.HOME,
                            **platform_util.no_window_kwargs())
         out = (s.stdout + s.stderr).lower()
         info["logged_in"] = s.returncode == 0 and "not logged in" not in out
@@ -79,7 +81,7 @@ def claude_info(cfg):
     if not b:
         return info
     try:
-        s = subprocess.run([b, "auth", "status"], capture_output=True, text=True, timeout=20,
+        s = subprocess.run([b, "auth", "status"], capture_output=True, text=True, timeout=20, cwd=config.HOME,
                            **platform_util.no_window_kwargs())
         d = json.loads(s.stdout or "{}")
         info["logged_in"] = bool(d.get("loggedIn"))
@@ -168,6 +170,30 @@ def usage(hours):
     return {"bucket": bucket, "series": rows, "total": tot, "by_role": by_role}
 
 
+def speed(hours=24):
+    """How fast the chat is for this router: the last `hours` against the 7 days before. Chat is what a person waits
+    for. Everything comes from what the router recorded itself (nothing here is an estimate)."""
+    import statistics
+    now = time.time()
+    lo = now - hours * 3600
+
+    def stats(a, b):
+        rs = store.q(
+            "SELECT r.ts, r.done_ts, r.first_ts, r.mode, r.in_tok, r.cached_tok, "
+            "(SELECT COUNT(*) FROM requests p WHERE p.task = r.task AND p.ts < r.ts) AS earlier "
+            "FROM requests r WHERE r.role='chat' AND r.status='ok' AND r.source != 'selftest' AND r.done_ts IS NOT NULL "
+            "AND r.ts >= ? AND r.ts < ?", (a, b))
+        med = lambda xs: round(statistics.median(xs), 1) if xs else None
+        follow = [r for r in rs if r["earlier"]]
+        cont = sum(1 for r in follow if (r["mode"] or "").startswith("resume"))
+        tin = sum(r["in_tok"] or 0 for r in rs)
+        return {"n": len(rs), "median_s": med([r["done_ts"] - r["ts"] for r in rs]),
+                "first_s": med([r["first_ts"] - r["ts"] for r in rs if r["first_ts"]]), "n_first": sum(1 for r in rs if r["first_ts"]),
+                "follow_n": len(follow), "continued_pct": round(100 * cont / len(follow)) if follow else None,
+                "cached_pct": round(100 * sum(r["cached_tok"] or 0 for r in rs) / tin) if tin else None}
+    return {"now": stats(lo, now + 1), "before": stats(lo - 7 * 86400, lo), "hours": hours}
+
+
 def handle(method, path, data, q, cfg):
     if method == "GET" and path == "status":
         lims = store.latest_limits()
@@ -204,6 +230,8 @@ def handle(method, path, data, q, cfg):
             return 409, {"error": str(e)}, J
     if method == "GET" and path == "usage":
         return 200, usage(float(q.get("hours", 24))), J
+    if method == "GET" and path == "speed":
+        return 200, speed(float(q.get("hours", 24))), J
     if method == "GET" and path == "requests":
         rows = store.q("SELECT id, ts, done_ts, task, source, model, role, stream, tools, msgs, bytes, imgs, mode, status, "
                        "error, result, calls, in_tok, cached_tok, out_tok FROM requests ORDER BY ts DESC LIMIT ?",

@@ -1,6 +1,6 @@
 """The pieces the installers rely on: a usable port, the Claude lookup, the running service's view, and the
 loopback-Host rule that keeps a web page from reaching the local dashboard (DNS rebinding)."""
-import os, socket, sys, tempfile, unittest
+import contextlib, io, os, socket, sys, tempfile, unittest
 from types import SimpleNamespace
 from unittest import mock
 
@@ -78,6 +78,39 @@ class VerifyTest(unittest.TestCase):
             raise OSError("refused")
         out = preflight.verify_checks(self.CFG, call=call)
         self.assertFalse(out[0][0])
+
+
+class VerifyWaitsForTheSwapTest(unittest.TestCase):
+    def test_a_failure_right_after_an_update_is_looked_at_again(self):
+        answers = [[(False, "Codex logged in: Error loading configuration")], [(False, "still")], [(True, "Codex logged in")]]
+        with mock.patch.object(preflight, "verify_checks", side_effect=lambda *a, **k: answers.pop(0)) as vc, \
+                contextlib.redirect_stdout(io.StringIO()):   # (a Windows console can't print the check marks)
+            self.assertEqual(preflight.verify([], sleep=lambda s: None), 0)
+        self.assertEqual(vc.call_count, 3)
+
+    def test_a_real_problem_is_still_reported(self):
+        with mock.patch.object(preflight, "verify_checks", return_value=[(False, "Codex is not signed in")]) as vc, \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(preflight.verify([], sleep=lambda s: None), 1)
+        self.assertEqual(vc.call_count, 4)                         # once, and three more looks
+
+
+class StatusChecksRunFromAFolderThatExists(unittest.TestCase):
+    def test_cwd_is_the_router_home(self):
+        """Codex started from a deleted folder says 'Error loading configuration: No such file or directory' and
+        looks signed out: happened after an installer replaced the app folder under the running router."""
+        from codex_os3 import config, ui_api
+        seen = []
+
+        def run(cmd, **kw):
+            seen.append(kw.get("cwd"))
+            return SimpleNamespace(stdout="codex-cli 9.9.9", stderr="", returncode=0)
+        with mock.patch.object(ui_api.subprocess, "run", side_effect=run), mock.patch.object(ui_api.shutil, "which", return_value="/x/codex"), \
+                mock.patch.object(ui_api.roles, "claude_path", return_value="/x/claude"):
+            ui_api.codex_info({"codex_bin": "/x/codex"}, fresh=True)
+            ui_api.claude_info({"claude_bin": "/x/claude"}, fresh=True)
+        self.assertEqual(set(seen), {config.HOME})
+        self.assertEqual(len(seen), 3)
 
 
 if __name__ == "__main__":

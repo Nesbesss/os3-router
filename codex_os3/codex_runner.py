@@ -45,6 +45,34 @@ def slots(n):
     return _slots
 
 
+_bg, _bg_n = None, None
+
+
+def take(cfg, role, alive):
+    """A place to run a model call -> the function that gives it back. Background calls (OS3's memory and review
+    work, often long) may hold all but one place, so a chat message or a worker step never waits behind them:
+    on a real router chat took 16 s instead of 10 s while three other calls were already running."""
+    global _bg, _bg_n
+    n = cfg["max_codex"]
+    shared = slots(n)  # (takes the same lock: not inside it)
+    with _slots_lock:
+        if role == "background" and (_bg is None or _bg_n != n):
+            _bg, _bg_n = threading.BoundedSemaphore(max(1, n - 1)), n
+        sems = ([_bg] if role == "background" else []) + [shared]
+    got = []
+    try:
+        for s in sems:
+            while not s.acquire(timeout=2):
+                if not alive():
+                    raise ClientGone()
+            got.append(s)
+    except BaseException:
+        for s in reversed(got):
+            s.release()
+        raise
+    return lambda: [s.release() for s in reversed(got)]
+
+
 def split_model(model, default_effort):
     for e in ("-xhigh", "-ultra", "-max", "-high", "-medium", "-low", "-minimal"):
         if model.endswith(e):
@@ -60,7 +88,7 @@ def known_features(codex):
     --disable is a hard error, and the set changes between versions."""
     if codex not in _known:
         try:
-            out = subprocess.run([codex, "features", "list"], capture_output=True, text=True, timeout=30,
+            out = subprocess.run([codex, "features", "list"], capture_output=True, text=True, timeout=30, cwd=config.HOME,
                                  **platform_util.popen_group_kwargs()).stdout
             _known[codex] = {line.split()[0] for line in out.splitlines() if line.strip()}
         except (OSError, subprocess.SubprocessError):
@@ -157,16 +185,13 @@ def run(cfg, prompt, model, schema=None, alive=lambda: True, images=(), resume=N
         if resume:
             wait_exiting(resume)
 
-        sem = slots(cfg["max_codex"])
-        while not sem.acquire(timeout=2):
-            if not alive():
-                raise ClientGone()
+        release = take(cfg, role, alive)
         try:
             idle = idle_limit(cfg, split_model(model, cfg["effort"])[1], role)
             out, err_lines, thread = _supervise(dict(cfg, hang_idle_s=idle), cmd, prompt, alive, resume, env=accounts.env(account),
                                                 final=codex_done, detach=True)
         finally:
-            sem.release()
+            release()
     finally:
         for f in tmp:
             try:

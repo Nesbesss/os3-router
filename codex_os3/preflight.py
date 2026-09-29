@@ -2,7 +2,7 @@
 which port the router can really listen on, where Claude Code is, and whether the *running service*
 (not the installer's own shell) can see Codex and Claude. Only the Codex and Claude checks are asked for:
 the rabbit-agent ones can't pass before OS3 is connected."""
-import json, os, socket, urllib.request
+import json, os, socket, time, urllib.request
 
 from . import config, platform_util, roles
 
@@ -99,9 +99,18 @@ def verify_checks(cfg, selftest=False, call=_call):
     return out
 
 
-def verify(argv):
+def verify(argv, sleep=time.sleep):
+    cfg = config.load()
+    results = verify_checks(cfg)
+    for _ in range(3):  # right after an update the old worker may still answer while it drains: look again before saying so
+        if all(ok for ok, _ in results):
+            break
+        sleep(6)
+        results = verify_checks(cfg)
+    if "--selftest" in argv and all(ok for ok, _ in results):
+        results = verify_checks(cfg, selftest=True)
     bad = 0
-    for ok, text in verify_checks(config.load(), "--selftest" in argv):
+    for ok, text in results:
         print(f"     {'✓' if ok else '✗'} {text}")
         bad += not ok
     return 1 if bad else 0

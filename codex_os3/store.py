@@ -11,7 +11,7 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS requests (
   id INTEGER PRIMARY KEY, ts REAL, done_ts REAL, task TEXT, source TEXT, model TEXT,
   stream INT, tools INT, msgs INT, bytes INT, imgs INT, mode TEXT, status TEXT, error TEXT,
-  result TEXT, calls TEXT, in_tok INT, cached_tok INT, out_tok INT, reason_tok INT, role TEXT);
+  result TEXT, calls TEXT, in_tok INT, cached_tok INT, out_tok INT, reason_tok INT, role TEXT, first_ts REAL);
 CREATE INDEX IF NOT EXISTS req_ts ON requests(ts);
 CREATE INDEX IF NOT EXISTS req_task ON requests(task);
 CREATE TABLE IF NOT EXISTS limits (
@@ -20,6 +20,9 @@ CREATE TABLE IF NOT EXISTS events (
   id INTEGER PRIMARY KEY, ts REAL, task TEXT, source TEXT, kind TEXT, level TEXT, msg TEXT, data TEXT);
 CREATE INDEX IF NOT EXISTS ev_ts ON events(ts);
 CREATE TABLE IF NOT EXISTS sessions (key TEXT PRIMARY KEY, thread TEXT, hashes TEXT, used REAL);
+-- (its own table: an older version inserts into `sessions` by position, so that table must keep its four columns
+-- while old and new workers overlap during an update, and after a rollback)
+CREATE TABLE IF NOT EXISTS session_anchor (key TEXT PRIMARY KEY, anchor TEXT);
 CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT);
 """
 
@@ -43,6 +46,12 @@ def db():
                     c.execute("ALTER TABLE requests ADD COLUMN role TEXT")
                 if "backend" not in {r[1] for r in c.execute("PRAGMA table_info(limits)")}:  # before 0.2.0
                     c.execute("ALTER TABLE limits ADD COLUMN backend TEXT DEFAULT 'codex'")
+                if "anchor" in {r[1] for r in c.execute("PRAGMA table_info(sessions)")}:
+                    # a pre-release build of 0.6.0 added it: older versions insert into `sessions` by position
+                    c.execute("ALTER TABLE sessions DROP COLUMN anchor")
+                if "first_ts" not in cols:  # before 0.6.0: when the first words of a streamed answer went out
+                    c.execute("ALTER TABLE requests ADD COLUMN first_ts REAL")
+
                 break
             except sqlite3.OperationalError:
                 time.sleep(0.2 * (attempt + 1))
@@ -72,7 +81,7 @@ def request_end(rid, **f):
     if isinstance(f.get("calls"), (list, tuple)):
         f["calls"] = json.dumps(f["calls"])
     keys = [k for k in f if k in ("done_ts", "imgs", "mode", "status", "error", "result", "calls", "model",
-                                  "in_tok", "cached_tok", "out_tok", "reason_tok")]
+                                  "in_tok", "cached_tok", "out_tok", "reason_tok", "first_ts")]
     _w(f"UPDATE requests SET {','.join(k + '=?' for k in keys)} WHERE id=?",
        [f[k] for k in keys] + [rid])
 
@@ -133,16 +142,21 @@ def event(kind, msg, task=None, source="router", level="info", data=None):
 # -- sessions (survive worker reloads) ----------------------------------------
 
 def session_get(key):
-    r = q("SELECT * FROM sessions WHERE key=?", (key,))
+    r = q("SELECT s.*, a.anchor FROM sessions s LEFT JOIN session_anchor a ON a.key = s.key WHERE s.key=?", (key,))
     return r[0] if r else None
 
 
-def session_put(key, thread, hashes):
+def session_put(key, thread, hashes, anchor=None):
     _w("INSERT OR REPLACE INTO sessions VALUES(?,?,?,?)", (key, thread, json.dumps(hashes), time.time()))
+    if anchor:
+        _w("INSERT OR REPLACE INTO session_anchor VALUES(?,?)", (key, json.dumps(anchor)))
+    else:
+        _w("DELETE FROM session_anchor WHERE key=?", (key,))
 
 
 def session_drop(key):
     _w("DELETE FROM sessions WHERE key=?", (key,))
+    _w("DELETE FROM session_anchor WHERE key=?", (key,))
 
 
 def sessions_stale(ttl):
@@ -164,3 +178,4 @@ def prune(days):
     cut = time.time() - days * 86400
     for t in ("requests", "limits", "events"):
         _w(f"DELETE FROM {t} WHERE ts < ?", (cut,))
+    _w("DELETE FROM session_anchor WHERE key NOT IN (SELECT key FROM sessions)")  # (an older version drops sessions only)
