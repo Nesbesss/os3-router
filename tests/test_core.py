@@ -592,6 +592,55 @@ class PreReleaseSchemaTest(unittest.TestCase):
             store.db().close()
 
 
+class NewModelArrivesByItselfTest(unittest.TestCase):
+    """A model OpenAI adds (GPT-6.1 Sol, launched 2026-09-29, Pro first, Plus later) needs no release: it shows up when
+    Codex lists it for the account, and until then a request for it is turned into one the plan has."""
+    def test_listed_by_codex_it_is_offered_with_its_efforts(self):
+        from codex_os3 import roles
+        with tempfile.TemporaryDirectory() as home:
+            with open(os.path.join(home, "models_cache.json"), "w") as f:
+                json.dump({"models": [{"slug": "gpt-6.1-sol", "display_name": "GPT-6.1-Sol", "visibility": "list",
+                                       "default_reasoning_level": "medium",
+                                       "supported_reasoning_levels": [{"effort": e} for e in ("low", "medium", "high", "xhigh", "max", "ultra")]},
+                                      {"slug": "gpt-6-sol", "display_name": "GPT-6-Sol", "visibility": "list",
+                                       "supported_reasoning_levels": [{"effort": "low"}, {"effort": "medium"}]}]}, f)
+            got = {m["slug"]: m for m in roles.account_models(home)}
+        self.assertEqual(got["gpt-6.1-sol"]["name"], "GPT-6.1-Sol")
+        self.assertEqual(got["gpt-6.1-sol"]["efforts"], ["low", "medium", "high", "xhigh", "max", "ultra"])
+        self.assertEqual(roles.backend("gpt-6.1-sol"), "codex")
+
+    def test_the_refusal_text_openai_sends_is_recognised_as_a_plan_problem(self):
+        """Word for word what a Plus account got from Codex for gpt-6.1-sol on launch day."""
+        from codex_os3 import codex_runner
+        msg = ('{"type":"error","status":400,"error":{"type":"invalid_request_error","message":'
+               '"The \'gpt-6.1-sol\' model is not supported when using Codex with a ChatGPT account."}}')
+        self.assertTrue(codex_runner.PLAN_RE.search(msg))
+        self.assertEqual(codex_runner.split_model("gpt-6.1-sol-high", "medium"), ("gpt-6.1-sol", "high"))   # (the dot is not an effort)
+
+
+class NewerCodexHintTest(unittest.TestCase):
+    """GPT-6.1 Sol on launch day: an account that HAS it was refused ("not supported when using Codex with a ChatGPT
+    account") by Codex 0.155.1 and accepted by 0.159.1. The router says so instead of leaving people to guess."""
+    def latest(self, installed, reply):
+        from codex_os3 import ui_api
+        store.kv_set("codex_latest", None)
+        with mock.patch.object(ui_api, "codex_info", return_value={"version": installed}), \
+                mock.patch("codex_os3.updater._get", side_effect=reply if isinstance(reply, Exception) else (lambda *a, **k: reply)):
+            return ui_api.codex_latest({})
+
+    def test_older_installed_codex_is_flagged(self):
+        r = self.latest("0.155.1", b'{"version": "0.159.1"}')
+        self.assertEqual((r["installed"], r["latest"], r["newer"]), ("0.155.1", "0.159.1", True))
+
+    def test_current_or_newer_is_not(self):
+        self.assertFalse(self.latest("0.159.1", b'{"version": "0.159.1"}')["newer"])
+        self.assertFalse(self.latest("0.161.0-alpha.2", b'{"version": "0.159.1"}')["newer"])   # (an alpha of a later release)
+
+    def test_no_answer_or_a_strange_one_says_nothing(self):
+        self.assertFalse(self.latest("0.155.1", OSError("offline"))["newer"])
+        self.assertFalse(self.latest("0.155.1", b'{"version": "0.1.2505172116-beta"}')["newer"])
+
+
 class CapacityTest(unittest.TestCase):
     def test_background_never_takes_the_last_place(self):
         import threading

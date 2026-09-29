@@ -473,7 +473,10 @@ VIEWS.models = {static: true, async draw() {
   [CFG, MODELS] = await Promise.all([api("config"), api("models")]);
   const opts = (sel, none) => (none ? `<option value="">${none}</option>` : "") + ["codex", "claude"].map(b => { const ms = MODELS.filter(m => (m.backend || "codex") === b); return ms.length ? `<optgroup label="${b === "claude" ? "Claude (Claude Code)" : "ChatGPT (Codex)"}">${ms.map(m => `<option value="${esc(m.slug)}" ${m.slug === sel ? "selected" : ""}>${esc(m.name)}${m.only ? " (" + m.only.map(a => a === "main" ? "main account" : "account " + a).join(", ") + " only)" : ""}</option>`).join("")}</optgroup>` : ""; }).join("");
   const on = CFG.role_routing !== false;
+  const cx = await api("codex/latest").catch(() => null);
   $("#view").innerHTML = `<h1>Models</h1><p class="sub">Choose which model does what. Changes are saved right away.</p>
+    ${cx && cx.newer ? `<div class="card"><h3>A newer Codex is available</h3><p class="what">You have Codex ${esc(cx.installed)}; the newest is ${esc(cx.latest)}. Newer models, GPT-6.1 Sol for example, can need a newer Codex than the one installed, and then your account is refused a model it really has.</p>
+      <div class="row"><button class="btn primary" data-fix="update_codex">Update Codex</button></div></div>` : ""}
     <div class="card"><label class="sw"><input type="checkbox" id="routing" ${on ? "checked" : ""}><span><b>A different model for each role</b><span class="muted">Off: one model (${esc(CFG.model)}) does everything.</span></span></label></div>
     ${MODELS.some(m => m.backend === "claude") ? "" : `<div class="card"><h3>Claude models</h3><p class="what">The router can't find Claude Code on this computer, so only ChatGPT models are listed. Already installed? Run <code>which claude</code> in Terminal and paste the path here.</p>
       <div class="field"><span>Path</span><div class="row"><input id="claudebin" placeholder="/Users/you/.local/bin/claude" style="flex:1"><button class="btn" id="claudesave">Use this</button></div></div></div>`}

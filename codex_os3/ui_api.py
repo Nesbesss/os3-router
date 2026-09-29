@@ -194,6 +194,24 @@ def speed(hours=24):
     return {"now": stats(lo, now + 1), "before": stats(lo - 7 * 86400, lo), "hours": hours}
 
 
+def codex_latest(cfg):
+    """{installed, latest, newer}: is there a newer Codex than the one the router runs? Newer models (GPT-6.1 Sol on launch
+    day) can need a newer Codex than the one that is installed: the account is refused with a plan message that hides
+    the real reason. Asked at most every 6 hours; a failed lookup says nothing."""
+    from . import updater
+    installed = codex_info(cfg)["version"]
+    c = store.kv_get("codex_latest") or {}
+    if time.time() - c.get("ts", 0) > 6 * 3600:
+        try:
+            c = {"ts": time.time(), "latest": json.loads(updater._get("https://registry.npmjs.org/@openai/codex/latest", 15))["version"]}
+        except Exception:
+            c = dict(c, ts=time.time() - 5 * 3600)  # (try again in an hour)
+        store.kv_set("codex_latest", c)
+    latest = c.get("latest")
+    newer = bool(installed and latest and re.fullmatch(r"\d+\.\d+\.\d+", latest) and _ver(installed) < _ver(latest))
+    return {"installed": installed, "latest": latest, "newer": newer}
+
+
 def handle(method, path, data, q, cfg):
     if method == "GET" and path == "status":
         lims = store.latest_limits()
@@ -303,6 +321,8 @@ def handle(method, path, data, q, cfg):
     if method == "POST" and path == "whatsnew/seen":
         store.kv_set("whatsnew_seen", __version__)
         return 200, {"ok": True}, J
+    if method == "GET" and path == "codex/latest":
+        return 200, codex_latest(cfg), J
     if method == "GET" and path == "models":
         accounts.ensure_models(cfg)  # an account that hasn't run yet has no list of its own
         return 200, roles.available_models(), J
