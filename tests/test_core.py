@@ -550,6 +550,48 @@ class SpeedNumbersTest(unittest.TestCase):
         store._w("DELETE FROM requests")
 
 
+class OlderVersionsStillWorkTest(unittest.TestCase):
+    """During an update the old worker keeps running on the database the new one has migrated, and a rollback puts
+    the old code back on it. The statements older versions run must still work (found the hard way: an added column
+    on `sessions` broke the old positional INSERT)."""
+    def test_statements_of_v0_5_14_on_the_current_database(self):
+        db = store.db()
+        db.execute("INSERT OR REPLACE INTO sessions VALUES(?,?,?,?)", ("old-k", "t", "[]", time.time()))
+        db.execute("INSERT INTO requests(ts,task,source,model,stream,tools,msgs,bytes,status,role) VALUES(?,?,?,?,?,?,?,?,'running',?)",
+                   (time.time(), "old", "s", "m", 1, 1, 1, 1, "chat"))
+        db.execute("UPDATE requests SET done_ts=?, mode=?, status=? WHERE task='old'", (time.time(), "fresh", "ok"))
+        self.assertEqual(store.session_get("old-k")["thread"], "t")                     # (and the new code reads what the old wrote)
+        self.assertIsNone(store.session_get("old-k")["anchor"])
+        store.session_put("new-k", "t2", ["h"], {"ids": ["call_1"]})
+        self.assertEqual(json.loads(store.session_get("new-k")["anchor"]), {"ids": ["call_1"]})
+        store.session_drop("new-k")
+        db.execute("DELETE FROM sessions WHERE key='old-k'")                            # an older version drops sessions only
+        db.execute("DELETE FROM requests WHERE task='old'")
+        store.session_put("orphan", "t3", ["h"], {"text": "x"})
+        db.execute("DELETE FROM sessions WHERE key='orphan'")
+        store.prune(7)
+        self.assertEqual(db.execute("SELECT COUNT(*) FROM session_anchor WHERE key='orphan'").fetchone()[0], 0)
+
+
+threading_local = __import__('threading').local
+
+
+class PreReleaseSchemaTest(unittest.TestCase):
+    def test_extra_sessions_column_from_a_prerelease_is_removed(self):
+        import sqlite3
+        with tempfile.TemporaryDirectory() as home, mock.patch.object(store, "DB", os.path.join(home, "s.db")), \
+                mock.patch.object(store, "_local", threading_local()):
+            c = sqlite3.connect(store.DB)
+            c.execute("CREATE TABLE sessions (key TEXT PRIMARY KEY, thread TEXT, hashes TEXT, used REAL, anchor TEXT)")
+            c.execute("INSERT INTO sessions VALUES('k','t','[]',1,'{}')")
+            c.commit(); c.close()
+            cols = [r[1] for r in store.db().execute("PRAGMA table_info(sessions)")]
+            self.assertEqual(cols, ["key", "thread", "hashes", "used"])
+            store.db().execute("INSERT OR REPLACE INTO sessions VALUES(?,?,?,?)", ("k2", "t", "[]", 1.0))   # an older version's insert
+            self.assertEqual(store.db().execute("SELECT COUNT(*) FROM sessions").fetchone()[0], 2)          # (nothing was lost)
+            store.db().close()
+
+
 class CapacityTest(unittest.TestCase):
     def test_background_never_takes_the_last_place(self):
         import threading
