@@ -172,6 +172,8 @@ class Turn:
     def codex(self, prompt, images=(), resume=None, keep=False, stream=False):
         runner, extra = (claude_runner if self.backend == "claude" else codex_runner), {}
         if self.backend == "codex":
+            if self.account is not None and self.account not in accounts.all_accounts():
+                raise SignedOut("This Codex account was removed from the router. Add an account under Accounts.")
             extra["account"] = self.account
             if self.own_images():
                 extra["image_gen"] = True
@@ -306,8 +308,6 @@ class Turn:
         ok, status = False, "error"
         try:
             try:
-                if self.backend == "codex" and self.account not in accounts.all_accounts():
-                    raise SignedOut("No Codex account is connected to the router. Add one under Accounts.")
                 raw, self.tid = self.codex(prompt, images.files, resume=thread, keep=self.tracked, stream=True)
             except ClientGone:
                 raise

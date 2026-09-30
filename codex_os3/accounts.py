@@ -325,6 +325,7 @@ def remove(aid):
     for prefix in ("signed_out:", "limited:", "plan:"):
         store.kv_set(prefix + key, None)
     store.kv_set("models_try:" + aid, None)
+    store.kv_set("no_model:" + aid, None)
     store._w("DELETE FROM limits WHERE backend=?", (key,))
     store.event("account_removed", f"Codex account {aid} removed")
 
