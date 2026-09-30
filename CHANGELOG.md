@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.6.3 (unreleased)
+## 0.6.3 (2026-10-01)
 - **ChatGPT requests keep working if the Codex app moves.** When a saved Codex path disappears, the router looks for a working CLI, including the copy inside ChatGPT.app. Valid custom paths stay in use. The dashboard and health checks now show when Codex is missing or cannot start.
 
 ## 0.6.2 (2026-09-30)
