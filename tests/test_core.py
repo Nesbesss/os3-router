@@ -466,6 +466,7 @@ class CodexUpdatePauseTest(unittest.TestCase):
         from codex_os3 import config, selffix
         with mock.patch.object(selffix.subprocess, "run", return_value=mock.Mock(returncode=0, stdout="", stderr="")) as run, \
                 mock.patch.object(selffix.ui_api, "codex_info", return_value={"version": "1"}), \
+                mock.patch.object(selffix.platform_util, "codex_path", return_value="/x/codex"), \
                 mock.patch.object(selffix.shutil, "which", return_value="/usr/bin/npm"), \
                 mock.patch.object(selffix.os.path, "isfile", return_value=True):
             selffix.update_codex({"codex_bin": "/x/codex"})
@@ -680,7 +681,7 @@ class AppServerStartTest(unittest.TestCase):
         from codex_os3 import appserver
         with mock.patch.object(appserver, "Server") as create, \
                 mock.patch.dict(appserver._servers, clear=True), \
-                mock.patch.dict(appserver._starting, clear=True):
+                mock.patch.dict(appserver._starting, clear=True), mock.patch.object(appserver.platform_util, "codex_path", return_value="c"):
             regular = appserver.server({"codex_bin": "c"}, "main")
             regular.codex = "c"
             image = appserver.server({"codex_bin": "c"}, "main", image_gen=True)
@@ -737,7 +738,7 @@ class AppServerStartTest(unittest.TestCase):
             def alive(self):
                 return True
         with mock.patch.object(appserver, "Server", Slow), mock.patch.dict(appserver._servers, clear=True), \
-                mock.patch.dict(appserver._starting, clear=True):
+                mock.patch.dict(appserver._starting, clear=True), mock.patch.object(appserver.platform_util, "codex_path", return_value="c"):
             t = threading.Thread(target=appserver.server, args=({"codex_bin": "c"}, "2"))
             t.start()
             time.sleep(0.2)
@@ -1279,9 +1280,11 @@ class CodexImagesTest(unittest.TestCase):
         self.assertIn("built-in image generation", t.build(full=True)[1])
         self.assertFalse(engine.Turn(dict(config.load(), codex_images=False), body, lambda: True).own_images())
         self.assertFalse(engine.Turn(config.load(), dict(body, tools=TOOLS), lambda: True).own_images())
-        cmd = codex_runner.build_cmd({"effort": "low"}, "gpt-6-sol-low", image_gen=True)
-        self.assertNotIn("image_generation", cmd)
-        self.assertIn("image_generation", codex_runner.build_cmd({"effort": "low"}, "gpt-6-sol-low"))
+        with mock.patch.object(codex_runner.platform_util, "codex_path", return_value="codex"), \
+                mock.patch.object(codex_runner, "known_features", return_value=set()):
+            cmd = codex_runner.build_cmd({"effort": "low"}, "gpt-6-sol-low", image_gen=True)
+            self.assertNotIn("image_generation", cmd)
+            self.assertIn("image_generation", codex_runner.build_cmd({"effort": "low"}, "gpt-6-sol-low"))
         home = tempfile.mkdtemp()
         os.makedirs(os.path.join(home, "generated_images", "T1"))
         png = os.path.join(home, "generated_images", "T1", "apple.png")

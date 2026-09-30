@@ -3,7 +3,7 @@ import hmac, json, os, re, select, signal, socket, threading, time, urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import __version__, config, engine, store, ui_api
-from .platform_util import CODEX_MISSING, codex_path, pid_alive
+from .platform_util import pid_alive
 
 UI_DIR = os.path.join(os.path.dirname(__file__), "ui")
 LOCAL = ("127.0.0.1", "::1", "::ffff:127.0.0.1")
@@ -112,9 +112,12 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, {"object": "list", "data": [
                 {"id": m, "object": "model", "created": 0, "owned_by": "os3-router"} for m in ids]})
         if path in ("/health", "/v1"):
-            codex = codex_path(cfg)
+            codex = ui_api.codex_info(cfg)
+            # Keep service liveness independent of an optional backend: the supervisor must not restart
+            # a responsive Claude-only router or loop on a broken Codex installation.
             return self.send(200, {"status": "ok", "version": __version__, "pid": os.getpid(),
-                                   "codex_available": bool(codex), "codex_error": None if codex else CODEX_MISSING})
+                                   "codex_available": bool(codex["path"]) and not codex.get("error"),
+                                   "codex_error": codex.get("error")})
         if path == "/login":  # remote dashboard access: /login?key=<api key> sets a cookie
             key = dict(p.split("=", 1) for p in self.path.split("?", 1)[-1].split("&") if "=" in p).get("key", "")
             if not cfg["api_key"] or not hmac.compare_digest(urllib.parse.unquote(key), cfg["api_key"]):

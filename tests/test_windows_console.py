@@ -34,7 +34,8 @@ class StatusChecksOpenNoWindow(unittest.TestCase):
         return calls
 
     def test_codex_checks_have_no_console_window(self):
-        calls = self.run_on_windows(ui_api.codex_info, {"codex_bin": r"C:\npm\codex.exe"}, "codex-cli 0.160.0")
+        with mock.patch.object(platform_util, "codex_path", return_value="codex.exe"):
+            calls = self.run_on_windows(ui_api.codex_info, {"codex_bin": "codex.exe"}, "codex-cli 0.160.0")
         self.assertEqual([c[0][1:] for c in calls], [["--version"], ["login", "status"]])
         for cmd, kw in calls:
             self.assertTrue(kw.get("creationflags", 0) & NO_WINDOW, cmd)

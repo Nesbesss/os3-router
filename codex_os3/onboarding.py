@@ -85,6 +85,8 @@ def engine_step(cfg):
     if "codex" not in need:
         return dict(step, state="ok", detail="Claude Code, logged in")
     c = ui_api.codex_info(cfg)
+    if c.get("error"):
+        return dict(step, state="error", detail=c["error"], action="update_codex")
     if not c["path"]:
         return dict(step, state="error", detail="The Codex CLI isn't installed. Run the installer again, or in a "
                     "terminal: npm i -g @openai/codex", action="update_codex")

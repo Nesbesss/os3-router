@@ -64,7 +64,11 @@ def codex_info(cfg=None):
         # cwd: a folder that always exists. Started from one that was deleted (an installer replaced the app folder under a
         # running worker) Codex says "Error loading configuration: No such file or directory" and looks signed out
         v = subprocess.run([b, "--version"], capture_output=True, text=True, timeout=15, cwd=config.HOME, **platform_util.no_window_kwargs())
-        info["version"] = (v.stdout or v.stderr).strip().split()[-1] if (v.stdout or v.stderr) else None
+        detail = (v.stdout + v.stderr).strip()
+        if v.returncode or not detail:
+            info["error"] = f"Codex version check failed (exit {v.returncode}): {detail[:200] or 'no version returned'}"
+            return info
+        info["version"] = detail.split()[-1]
         s = subprocess.run([b, "login", "status"], capture_output=True, text=True, timeout=15, cwd=config.HOME,
                            **platform_util.no_window_kwargs())
         out = (s.stdout + s.stderr).lower()
@@ -109,7 +113,7 @@ def doctor(cfg):
                  {"check": "Claude Code logged in (your own account)", "ok": bool(k["logged_in"]),
                   "detail": k["detail"] or "run: claude, then /login"}]
     return extra + [
-        {"check": "Codex CLI installed", "ok": bool(c["path"]), "detail": c.get("error") or c["path"] or "npm i -g @openai/codex"},
+        {"check": "Codex CLI installed", "ok": bool(c["path"]) and not c.get("error"), "detail": c.get("error") or c["path"] or "npm i -g @openai/codex"},
         {"check": f"Codex CLI version ≥ {MIN_CODEX}", "ok": _ver(c["version"]) >= _ver(MIN_CODEX),
          "detail": (c["version"] or "?") + ("" if _ver(c["version"]) >= _ver(MIN_CODEX)
                                              else " — update: npm i -g @openai/codex@latest")},
@@ -215,12 +219,14 @@ def codex_latest(cfg):
 
 def handle(method, path, data, q, cfg):
     if method == "GET" and path == "status":
+        from . import onboarding
         lims = store.latest_limits()
         wd = store.kv_get("watchdog_last") or {}
         running = store.q("SELECT COUNT(*) n FROM requests WHERE status='running' AND ts > ?", (time.time() - 900,))[0]["n"]
         return 200, {"version": __version__, "time": time.time(), "limits": lims.get("codex") or next(iter(lims.values()), None),
                      "limits_all": lims, "latest_release": store.kv_get("update_latest"),
                      "whats_new": whatsnew()["show"],
+                     "codex": codex_info(cfg), "codex_required": "codex" in onboarding.backends(cfg),
                      "fallback_active": [b for b in ("codex", "claude") if (accounts.pick() is None if b == "codex" else
                                                                            (store.kv_get("limited:" + b) or 0) > time.time())],
                      "alerts": store.kv_get("alerts") or [],
