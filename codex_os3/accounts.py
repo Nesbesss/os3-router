@@ -45,7 +45,8 @@ def extra():
 
 def all_accounts():
     """Every account, in the order the router tries them (main first unless another was put first)."""
-    accts, order = [MAIN] + extra(), store.kv_get("account_order") or []
+    accts = ([] if store.kv_get("main_removed") else [MAIN]) + extra()
+    order = store.kv_get("account_order") or []
     return sorted(accts, key=lambda a: (order.index(a) if a in order else len(order), accts.index(a)))
 
 
@@ -312,11 +313,26 @@ def _restart(aid):
 
 
 def remove(aid):
-    if aid == MAIN or aid not in extra():
+    if aid not in all_accounts():
         raise ValueError("unknown account")
     _restart(aid)
-    _drop(aid)
+    if aid == MAIN:
+        store.kv_set("main_removed", True)  # detach only: never delete the user's shared Codex login
+    else:
+        _drop(aid)
+    store.kv_set("account_order", [a for a in (store.kv_get("account_order") or []) if a != aid])
+    key = backend_key(aid)
+    for prefix in ("signed_out:", "limited:", "plan:"):
+        store.kv_set(prefix + key, None)
+    store.kv_set("models_try:" + aid, None)
+    store.kv_set("no_model:" + aid, None)
+    store._w("DELETE FROM limits WHERE backend=?", (key,))
     store.event("account_removed", f"Codex account {aid} removed")
+
+
+def restore_main():
+    store.kv_set("main_removed", False)
+    store.kv_set("account_info:main", None)
 
 
 def overview(cfg):
@@ -329,4 +345,5 @@ def overview(cfg):
         out.append({"id": a, "email": i.get("email"), "plan": store.kv_get("plan:" + backend_key(a)) or i.get("plan"),
                     "active": a == active, "limited": limited(a), "nearly_out": nearly_out(a), "signed_out": signed_out(a),
                     "limits": dict(lim) if lim else None})
-    return {"accounts": out, "terms": TERMS, "terms_accepted": terms_accepted(), "switch_at": SWITCH_AT}
+    return {"accounts": out, "terms": TERMS, "terms_accepted": terms_accepted(), "switch_at": SWITCH_AT,
+            "main_removed": bool(store.kv_get("main_removed"))}

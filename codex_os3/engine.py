@@ -172,6 +172,8 @@ class Turn:
     def codex(self, prompt, images=(), resume=None, keep=False, stream=False):
         runner, extra = (claude_runner if self.backend == "claude" else codex_runner), {}
         if self.backend == "codex":
+            if self.account is not None and self.account not in accounts.all_accounts():
+                raise SignedOut("This Codex account was removed from the router. Add an account under Accounts.")
             extra["account"] = self.account
             if self.own_images():
                 extra["image_gen"] = True
@@ -355,8 +357,8 @@ class Turn:
                 return {"role": "assistant", "content": "⚠️ Claude Code is signed out. In Terminal run `claude`, then "
                         "`/login`. Nothing was done."}, "stop"
             if isinstance(e, SignedOut):
-                return {"role": "assistant", "content": "⚠️ Codex is signed out (OpenAI ended the login, e.g. after a "
-                        "plan change). Open the OS3 Router app → Accounts → Sign in again. Nothing was done."}, "stop"
+                return {"role": "assistant", "content": "⚠️ Codex could not authenticate the account. Open the "
+                        "OS3 Router app → Accounts → Sign in again. Nothing was done."}, "stop"
             if e.plan:
                 return {"role": "assistant", "content": f"⚠️ {self.model.rsplit('-', 1)[0]} is not included in your "
                         f"{name} plan: {str(e)[:200]} Pick another model in the router dashboard "

@@ -518,20 +518,29 @@ VIEWS.accounts = {static: true, async draw() {
   const card = (a, i) => { const [cls, txt] = state(a), L = a.limits;
     return `<div class="card"><div class="row" style="justify-content:space-between"><h2 style="margin:0">${a.id === "main" ? "Main account" : "Account " + esc(a.id)}</h2><span class="chip acct ${cls}">${txt}</span></div>
       <p class="muted" style="margin:6px 0 12px">${i === 0 && A.accounts.length > 1 ? "<b>Used first</b> · " : ""}${esc(a.email || "ChatGPT account")}${a.plan ? " · " + esc(a.plan) : ""}</p>
-      ${a.signed_out ? `<div class="alert bad" style="margin:0 0 12px">OpenAI signed this account out (for example after a plan change). The router skips it until you sign in again.</div>` : ""}
+      ${a.signed_out ? `<div class="alert bad" style="margin:0 0 12px">Codex could not authenticate this account. Its saved login may be missing or invalid. Sign in again to reconnect it.</div>` : ""}
       ${L ? `<div class="rings">${rings(L)}</div>` : `<p class="muted">Not used yet: its limits show up after its first request.</p>`}
-      <div class="row" style="margin-top:12px">${a.signed_out ? `<button class="btn primary" data-signin="${esc(a.id)}">Sign in again</button>` : ""}${i > 0 ? `<button class="btn" data-first="${esc(a.id)}">Use first</button>` : ""}${a.id !== "main" ? `<button class="btn" data-rm="${esc(a.id)}">Remove</button>` : ""}</div>
+      <div class="row" style="margin-top:12px">${a.signed_out ? `<button class="btn primary" data-signin="${esc(a.id)}">Sign in again</button>` : ""}${i > 0 ? `<button class="btn" data-first="${esc(a.id)}">Use first</button>` : ""}<button class="btn" data-rm="${esc(a.id)}">Remove</button></div>
+      <div data-remove="${esc(a.id)}"></div>
       <div data-login="${esc(a.id)}"></div></div>`; };
   $("#view").innerHTML = `<h1>Accounts</h1><p class="sub">Add more ChatGPT accounts. The router uses one at a time, starting with the one used first, and moves to the next when it's at ${A.switch_at}% or at its limit; once the first has room again it goes back. A conversation stays on its account as long as it can.</p>
     <div class="grid">${A.accounts.map(card).join("")}</div>
     <div class="card" id="addcard" style="margin-top:18px"><h2>Add a ChatGPT account</h2>
       ${A.terms_accepted ? "" : `<div class="alert warn" style="margin:0 0 12px">${esc(A.terms)}</div><label class="check"><input type="checkbox" id="terms"> I understand and accept this</label>`}
-      <div class="row" style="margin-top:12px"><button class="btn primary" id="addacct" ${A.terms_accepted ? "" : "disabled"}>Add account</button></div>
+      <div class="row" style="margin-top:12px"><button class="btn primary" id="addacct" ${A.terms_accepted ? "" : "disabled"}>Add account</button>${A.main_removed ? `<button class="btn" id="restoremain">Use main Codex login</button>` : ""}</div>
       <div id="login"></div></div>`;
   const t = $("#terms"); if (t) t.onchange = () => { $("#addacct").disabled = !t.checked; };
   document.querySelectorAll("[data-rm]").forEach(b => b.onclick = async () => {
-    if (!confirm("Remove account " + b.dataset.rm + "? The router stops using it; you can add it again later.")) return;
-    await post("accounts/remove", {id: b.dataset.rm}); toast("Account removed"); VIEWS.accounts.draw(); });
+    const box = document.querySelector(`[data-remove="${b.dataset.rm}"]`);
+    box.innerHTML = `<div class="alert warn" style="margin-top:12px"><p>${b.dataset.rm === "main" ? "Stop using the main account in this router? Your Codex app login will be kept." : "Remove this account and its saved router login? You can add it again later."}</p><div class="row"><button class="btn primary" data-confirm-remove>Remove account</button><button class="btn" data-cancel-remove>Cancel</button></div></div>`;
+    box.querySelector("[data-cancel-remove]").onclick = () => { box.innerHTML = ""; };
+    box.querySelector("[data-confirm-remove]").onclick = async (e) => {
+      e.target.disabled = true;
+      try { await post("accounts/remove", {id: b.dataset.rm}); toast("Account removed"); await VIEWS.accounts.draw(); }
+      catch (err) { box.innerHTML = `<div class="alert bad">${esc(err.message)}</div>`; }
+    };
+  });
+  if ($("#restoremain")) $("#restoremain").onclick = async () => { await post("accounts/restore-main", {}); VIEWS.accounts.draw(); };
   document.querySelectorAll("[data-first]").forEach(b => b.onclick = async () => {
     await post("accounts/first", {id: b.dataset.first}); toast("The router now uses this account first"); VIEWS.accounts.draw(); });
   // device-code sign-in: a new account (add) or one OpenAI signed out (signin)
