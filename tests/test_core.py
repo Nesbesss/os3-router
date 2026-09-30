@@ -851,7 +851,8 @@ class WhatsNewTest(unittest.TestCase):
     def test_changelog_since_last_seen(self):
         from codex_os3 import __version__, ui_api, updater
         store.kv_set("whatsnew_seen", None)
-        w = ui_api.whatsnew()  # fresh install (no app.prev): only the current version
+        with mock.patch.object(ui_api, "_prev_version", return_value=None):
+            w = ui_api.whatsnew()  # fresh install: independent of a real app.prev folder
         self.assertEqual([x["version"] for x in w["sections"]], [__version__])
         store.kv_set("whatsnew_seen", "0.2.2")
         w = ui_api.whatsnew()
