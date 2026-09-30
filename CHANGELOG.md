@@ -1,7 +1,15 @@
 # Changelog
 
-## 0.6.1 (unreleased)
-- **ChatGPT requests keep working if the Codex app moves.** When a saved Codex path disappears, the router looks for a working CLI, including the copy inside ChatGPT.app. Setup and health checks now say when Codex is missing instead of treating a stale path as installed.
+## 0.6.3 (unreleased)
+- **ChatGPT requests keep working if the Codex app moves.** When a saved Codex path disappears, the router looks for a working CLI, including the copy inside ChatGPT.app. Valid custom paths stay in use. The dashboard and health checks now show when Codex is missing or cannot start.
+
+## 0.6.2 (2026-09-30)
+- **Protect saved logins from router tests.** Tests refuse to run against an already-loaded live router home. Update validation also uses separate temporary router and Codex homes, preventing test fixtures from emptying account 2's saved login or writing fake sign-out events to the live database.
+- **Remove any account from the router.** Removal has an inline confirmation that works in the macOS app. Removing the main account disconnects it from the router while keeping the shared Codex login; it can be restored later. Removed accounts no longer leave limits behind when their number is reused.
+- **Clearer authentication errors.** The app explains that a login may be missing or invalid, without claiming OpenAI deliberately signed the account out.
+
+## 0.6.1 (2026-09-30)
+- Regular and image tasks now share one Codex process per account, removing competing refresh-token caches that can contribute to repeated sign-outs. Image generation is configured per thread.
 
 ## 0.6.0 (2026-09-29)
 A faster router. We measured a real router first (5,000+ requests) to see where the waiting is, and fixed what showed up.

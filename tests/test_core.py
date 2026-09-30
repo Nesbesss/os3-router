@@ -7,6 +7,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from codex_os3 import export, prompt as P, repair, sessions, store, watchdog  # noqa: E402
 
+# Changing the environment cannot move modules already imported by a test launcher.
+# Refuse to run destructive fixtures against a cached, live router home.
+from codex_os3 import config as test_config  # noqa: E402
+if os.path.realpath(test_config.HOME) != os.path.realpath(os.environ["CODEX_OS3_HOME"]):
+    raise RuntimeError("Router tests require a fresh Python process with an isolated CODEX_OS3_HOME")
+
 NODE_A, NODE_B = "11111111-2222-4333-8444-555555555555", "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
 SYSTEM = (f'<node id="{NODE_A}" name="studio-mini" default="true"><hostname>Studio-Mini.local</hostname></node>'
           f'<node id="{NODE_B}" name="laptop"><hostname>Laptop.local</hostname></node>')
@@ -670,6 +676,17 @@ class CapacityTest(unittest.TestCase):
 
 
 class AppServerStartTest(unittest.TestCase):
+    def test_image_and_regular_tasks_share_one_auth_manager(self):
+        from codex_os3 import appserver
+        with mock.patch.object(appserver, "Server") as create, \
+                mock.patch.dict(appserver._servers, clear=True), \
+                mock.patch.dict(appserver._starting, clear=True):
+            regular = appserver.server({"codex_bin": "c"}, "main")
+            regular.codex = "c"
+            image = appserver.server({"codex_bin": "c"}, "main", image_gen=True)
+            self.assertIs(image, regular)
+            create.assert_called_once_with("c", None, images=True)
+
     def test_codex_that_fails_to_initialise_is_not_left_running(self):
         from codex_os3 import appserver
         proc = mock.Mock()
@@ -682,6 +699,28 @@ class AppServerStartTest(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 appserver.Server("codex")
         kill.assert_called_once_with(proc)
+
+    def test_shared_server_sets_image_feature_per_thread(self):
+        from codex_os3 import appserver, config
+        for enabled in (False, True):
+            srv = mock.Mock(loaded=set(), subs={})
+            def request(method, params, *args):
+                if method == "thread/start":
+                    self.assertEqual(params["config"], {
+                        "features.image_generation": enabled, "model_auto_compact_token_limit": 1234})
+                    return {"thread": {"id": "T"}}
+                if method == "turn/start":
+                    srv.subs["T"].put({"method": "item/completed", "params": {
+                        "item": {"type": "agentMessage", "text": "ok"}}})
+                    srv.subs["T"].put({"method": "turn/completed", "params": {
+                        "turn": {"status": "completed"}}})
+                return {}
+            srv.request.side_effect = request
+            srv.rate_limits.return_value = None
+            with mock.patch.object(appserver, "server", return_value=srv):
+                result = appserver.run(dict(config.load(), compact_tokens=1234), "hi", "gpt-6-luna",
+                                       image_gen=enabled)
+            self.assertEqual(result[0], "ok")
 
     def test_one_slow_account_start_does_not_block_another(self):
         import threading
@@ -730,6 +769,14 @@ class UpdaterTest(unittest.TestCase):
                 updater.install("v0.9.1", app=app, run_tests=False)
             self.assertFalse(os.path.exists(os.path.join(app, "NEW.txt")))
             updater.install("v0.9.0", app=app, run_tests=False)
+            with mock.patch.object(updater.subprocess, "run", return_value=mock.Mock(returncode=0)) as run:
+                updater.install("v0.9.0", app=app)
+            test_env = run.call_args.kwargs["env"]
+            self.assertNotEqual(test_env["CODEX_OS3_HOME"], config.HOME)
+            self.assertEqual(test_env["HOME"], test_env["USERPROFILE"])
+            self.assertTrue(test_env["CODEX_HOME"].startswith(test_env["HOME"] + os.sep))
+            self.assertNotIn("CODEX_OS3_SUPERVISOR", test_env)
+            self.assertNotIn("PYTHONPATH", test_env)
         finally:
             updater._get = orig
         self.assertTrue(os.path.exists(os.path.join(app, "NEW.txt")))
@@ -804,7 +851,8 @@ class WhatsNewTest(unittest.TestCase):
     def test_changelog_since_last_seen(self):
         from codex_os3 import __version__, ui_api, updater
         store.kv_set("whatsnew_seen", None)
-        w = ui_api.whatsnew()  # fresh install (no app.prev): only the current version
+        with mock.patch.object(ui_api, "_prev_version", return_value=None):
+            w = ui_api.whatsnew()  # fresh install: independent of a real app.prev folder
         self.assertEqual([x["version"] for x in w["sections"]], [__version__])
         store.kv_set("whatsnew_seen", "0.2.2")
         w = ui_api.whatsnew()
@@ -1037,7 +1085,32 @@ class AccountsTest(unittest.TestCase):
                 os.unlink(os.path.join(self.a.root(), "2", f))
             except OSError:
                 pass
-        store._w("DELETE FROM kv WHERE k LIKE 'signed_out:%' OR k LIKE 'plan:%' OR k LIKE 'models_try:%' OR k = 'account_order'")
+        store._w("DELETE FROM kv WHERE k LIKE 'signed_out:%' OR k LIKE 'plan:%' OR k LIKE 'models_try:%' OR k IN ('account_order','main_removed')")
+
+    def test_remove_main_detaches_without_deleting_shared_login(self):
+        auth = os.path.join(self.home, "auth.json")
+        with open(auth, "w") as f:
+            f.write("keep shared login")
+        with mock.patch.object(self.a, "_restart"):
+            self.a.remove("main")
+        self.assertNotIn("main", self.a.all_accounts())
+        with open(auth) as f:
+            self.assertEqual(f.read(), "keep shared login")
+        self.a.restore_main()
+        self.assertIn("main", self.a.all_accounts())
+
+    def test_removed_id_does_not_inherit_old_limits(self):
+        a = self.a
+        a.mark_limited("2")
+        a.mark_signed_out("2", "not logged in")
+        a.use_first("2")
+        store.add_limits({"primary": {"used_percent": 96, "resets_at": time.time()+3600}}, "codex:2")
+        with mock.patch.object(a, "_restart"):
+            a.remove("2")
+        os.makedirs(os.path.join(a.root(), "2"), exist_ok=True)
+        open(os.path.join(a.root(), "2", "auth.json"), "w").close()
+        self.assertTrue(a.usable("2"))
+        self.assertEqual(a.all_accounts(), ["main", "2"])
 
     def test_account_used_first(self):
         a, now = self.a, time.time()

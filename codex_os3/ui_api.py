@@ -283,6 +283,9 @@ def handle(method, path, data, q, cfg):
             if method == "POST" and path == "accounts/remove":
                 accounts.remove(str(data.get("id", "")))
                 return 200, {"ok": True}, J
+            if method == "POST" and path == "accounts/restore-main":
+                accounts.restore_main()
+                return 200, {"ok": True}, J
         except ValueError as e:
             return 400, {"error": str(e)}, J
     if method == "GET" and path == "onboarding":
@@ -400,4 +403,3 @@ def _supervisor_pid():
 def request_reload():
     """Graceful worker swap; a file instead of SIGHUP so it works on Windows too."""
     open(os.path.join(config.HOME, "reload.request"), "w").close()
-

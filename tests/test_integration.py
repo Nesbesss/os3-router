@@ -166,7 +166,7 @@ class Service(unittest.TestCase):
     def test_signed_out_login_gets_a_clear_answer(self):
         try:
             d = self.post({"messages": [{"role": "user", "content": "FAKE_SIGNEDOUT hi"}]})["choices"][0]["message"]
-            self.assertIn("signed out", d["content"])
+            self.assertIn("could not authenticate", d["content"])
             main = next(a for a in self.get("/api/accounts")["accounts"] if a["id"] == "main")
             self.assertTrue(main["signed_out"])
         finally:
