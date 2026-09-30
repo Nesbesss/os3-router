@@ -106,7 +106,9 @@ _servers, _lock, _starting = {}, threading.Lock(), {}
 def server(cfg, account=None, image_gen=False):
     """The running codex for this account (one per account: each has its own login and threads);
     tasks that may create images get their own one with Codex's image generation switched on."""
-    codex, acct = cfg.get("codex_bin") or "codex", account or accounts.MAIN
+    codex, acct = platform_util.codex_path(cfg), account or accounts.MAIN
+    if not codex:
+        raise RuntimeError(platform_util.CODEX_MISSING)
     key = acct + ("+images" if image_gen else "")
     with _lock:
         s = _servers.get(key)

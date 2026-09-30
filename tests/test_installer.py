@@ -105,7 +105,7 @@ class StatusChecksRunFromAFolderThatExists(unittest.TestCase):
         def run(cmd, **kw):
             seen.append(kw.get("cwd"))
             return SimpleNamespace(stdout="codex-cli 9.9.9", stderr="", returncode=0)
-        with mock.patch.object(ui_api.subprocess, "run", side_effect=run), mock.patch.object(ui_api.shutil, "which", return_value="/x/codex"), \
+        with mock.patch.object(ui_api.subprocess, "run", side_effect=run), mock.patch.object(ui_api.platform_util, "codex_path", return_value="/x/codex"), \
                 mock.patch.object(ui_api.roles, "claude_path", return_value="/x/claude"):
             ui_api.codex_info({"codex_bin": "/x/codex"}, fresh=True)
             ui_api.claude_info({"claude_bin": "/x/claude"}, fresh=True)

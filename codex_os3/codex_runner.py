@@ -98,7 +98,9 @@ def known_features(codex):
 
 def build_cmd(cfg, model, schema_file=None, image_files=(), resume=None, image_gen=False):
     model, effort = split_model(model, cfg["effort"])
-    codex = platform_util.native_bin(cfg.get("codex_bin") or "codex")
+    codex = platform_util.codex_path(cfg)
+    if not codex:
+        raise RuntimeError(platform_util.CODEX_MISSING)
     known = known_features(codex)
     disabled = [f for f in DISABLED if (f in known or not known) and not (image_gen and f == "image_generation")]
     cmd = [codex, "exec", *(["resume"] if resume else []), "--json",

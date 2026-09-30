@@ -1,5 +1,5 @@
 """JSON API behind the web UI. handle() -> (status, body, content_type)."""
-import json, os, re, shutil, subprocess, sys, time
+import json, os, re, subprocess, sys, time
 
 from . import __version__, accounts, config, export, os3, roles, sleep_control, store
 from . import platform_util
@@ -54,9 +54,10 @@ def cached(fn):
 
 @cached
 def codex_info(cfg=None):
-    b = platform_util.native_bin((cfg or {}).get("codex_bin") or shutil.which("codex"))  # the one the router runs
+    b = platform_util.codex_path(cfg)  # same discovery as both runners
     info = {"path": b, "version": None, "logged_in": None}
     if not b:
+        info["error"] = platform_util.CODEX_MISSING
         return info
     try:
         # polled by the open app/dashboard: without no_window_kwargs each check flashes a console window on Windows
@@ -69,8 +70,8 @@ def codex_info(cfg=None):
         out = (s.stdout + s.stderr).lower()
         info["logged_in"] = s.returncode == 0 and "not logged in" not in out
         info["login_detail"] = (s.stdout + s.stderr).strip()[:200]
-    except (OSError, subprocess.SubprocessError):
-        pass
+    except (OSError, subprocess.SubprocessError) as e:
+        info["error"] = f"Codex could not start: {e}"
     return info
 
 
@@ -108,7 +109,7 @@ def doctor(cfg):
                  {"check": "Claude Code logged in (your own account)", "ok": bool(k["logged_in"]),
                   "detail": k["detail"] or "run: claude, then /login"}]
     return extra + [
-        {"check": "Codex CLI installed", "ok": bool(c["path"]), "detail": c["path"] or "npm i -g @openai/codex"},
+        {"check": "Codex CLI installed", "ok": bool(c["path"]), "detail": c.get("error") or c["path"] or "npm i -g @openai/codex"},
         {"check": f"Codex CLI version ≥ {MIN_CODEX}", "ok": _ver(c["version"]) >= _ver(MIN_CODEX),
          "detail": (c["version"] or "?") + ("" if _ver(c["version"]) >= _ver(MIN_CODEX)
                                              else " — update: npm i -g @openai/codex@latest")},

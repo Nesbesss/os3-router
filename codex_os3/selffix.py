@@ -17,7 +17,7 @@ _lock = threading.Lock()
 
 def update_codex(cfg):
     """-> (ok, message). Updates the Codex CLI the way it was installed."""
-    b = platform_util.native_bin(cfg.get("codex_bin") or shutil.which("codex") or "")
+    b = platform_util.codex_path(cfg)
     real = os.path.realpath(b) if b else ""
     env = dict(os.environ)
     if b:

@@ -236,7 +236,10 @@ def start_login(cfg, accept_terms=False, again=None):
     import threading
     aid = again or new_id()
     os.makedirs(home(aid), exist_ok=True)
-    srv = appserver.Server(cfg.get("codex_bin") or "codex", aid)
+    codex = appserver.platform_util.codex_path(cfg)
+    if not codex:
+        raise RuntimeError(appserver.platform_util.CODEX_MISSING)
+    srv = appserver.Server(codex, aid)
     try:
         r = srv.request("account/login/start", {"type": "chatgptDeviceCode"}, 60)
     except Exception:

@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.6.1 (unreleased)
+- **ChatGPT requests keep working if the Codex app moves.** When a saved Codex path disappears, the router looks for a working CLI, including the copy inside ChatGPT.app. Setup and health checks now say when Codex is missing instead of treating a stale path as installed.
+
 ## 0.6.0 (2026-09-29)
 A faster router. We measured a real router first (5,000+ requests) to see where the waiting is, and fixed what showed up.
 - **Answers start appearing about 3 seconds sooner.** A chat answer is now shown while it is still being written, not after it is finished. In our test with a 150-word answer the first words came after 4.4 s instead of 7.7 s. This is for ChatGPT (Codex) on Mac and Linux; replies that are actions, not text, arrive whole as before. You can turn it off in **Settings**.
