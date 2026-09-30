@@ -653,7 +653,7 @@ async function refresh() {
     $("#ver").textContent = "v" + st.version;
     const ul = st.usage_limit && Date.now()/1000 - st.usage_limit.ts < 3600;
     const f = (st.watchdog?.findings || []).filter(x => x.level === "error");
-    $("#health").innerHTML = ul ? "⛔ usage limit" + (st.usage_limit.resets ? " · resets " + esc(st.usage_limit.resets) : "") : f.length ? "⚠ " + esc(f[0].kind) : st.running ? "● working (" + st.running + ")" : "✓ idle";
+    $("#health").innerHTML = st.codex_required && st.codex?.error ? "⚠ " + esc(st.codex.error) : ul ? "⛔ usage limit" + (st.usage_limit.resets ? " · resets " + esc(st.usage_limit.resets) : "") : f.length ? "⚠ " + esc(f[0].kind) : st.running ? "● working (" + st.running + ")" : "✓ idle";
     const tab = document.querySelector('nav button[aria-selected="true"]').dataset.tab;
     if (tab === "dash") await dash(st);
     if (tab === "setup") await setup(st);

@@ -109,7 +109,9 @@ def server(cfg, account=None, image_gen=False):
     Separate image servers used the same rotating refresh token with independent caches.
     Image generation is enabled in the process and restricted per thread below.
     """
-    codex, acct = cfg.get("codex_bin") or "codex", account or accounts.MAIN
+    codex, acct = platform_util.codex_path(cfg), account or accounts.MAIN
+    if not codex:
+        raise RuntimeError(platform_util.CODEX_MISSING)
     key = acct
     with _lock:
         s = _servers.get(key)

@@ -1,6 +1,6 @@
 """Process helpers that behave the same on macOS, Linux and Windows.
 (Careful: on Windows os.kill(pid, 0) terminates the process instead of probing it.)"""
-import glob, os, signal, subprocess, sys
+import glob, os, shutil, signal, subprocess, sys
 
 WINDOWS = sys.platform == "win32"
 
@@ -20,6 +20,33 @@ def native_bin(path, windows=WINDOWS):
         if os.path.isfile(base + ext):
             return base + ext
     return path
+
+
+CODEX_DIRS = [os.path.expanduser(d) for d in
+              ('~/.local/bin', '~/.npm-global/bin', '~/.volta/bin', '/opt/homebrew/bin', '/usr/local/bin', '/usr/bin')]
+CODEX_APP_DIRS = ['/Applications', os.path.expanduser('~/Applications')]
+CODEX_MISSING = 'Codex CLI is missing or is not executable. Install Codex or ChatGPT, or run the router installer again.'
+
+
+def codex_path(cfg=None):
+    # Prefer a working explicit choice; rediscover installs when its saved path goes stale.
+    # Launch services have a small PATH; desktop CLIs may move between app bundles.
+    def executable(path):
+        if not path:
+            return None
+        path = native_bin(os.path.expanduser(path))
+        if not os.path.dirname(path):
+            path = native_bin(shutil.which(path))
+        return path if path and os.path.isfile(path) and (WINDOWS or os.access(path, os.X_OK)) else None
+
+    saved = executable((cfg or {}).get('codex_bin'))
+    if saved:
+        return saved
+    candidates = [shutil.which('codex')] + [os.path.join(d, 'codex') for d in CODEX_DIRS]
+    if sys.platform == 'darwin':
+        candidates += [os.path.join(d, app + '.app', 'Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex')
+                       for d in CODEX_APP_DIRS for app in ('Codex', 'ChatGPT')]
+    return next((b for path in candidates if (b := executable(path))), None)
 
 
 def pid_alive(pid):

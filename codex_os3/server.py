@@ -112,7 +112,12 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, {"object": "list", "data": [
                 {"id": m, "object": "model", "created": 0, "owned_by": "os3-router"} for m in ids]})
         if path in ("/health", "/v1"):
-            return self.send(200, {"status": "ok", "version": __version__, "pid": os.getpid()})
+            codex = ui_api.codex_info(cfg)
+            # Keep service liveness independent of an optional backend: the supervisor must not restart
+            # a responsive Claude-only router or loop on a broken Codex installation.
+            return self.send(200, {"status": "ok", "version": __version__, "pid": os.getpid(),
+                                   "codex_available": bool(codex["path"]) and not codex.get("error"),
+                                   "codex_error": codex.get("error")})
         if path == "/login":  # remote dashboard access: /login?key=<api key> sets a cookie
             key = dict(p.split("=", 1) for p in self.path.split("?", 1)[-1].split("&") if "=" in p).get("key", "")
             if not cfg["api_key"] or not hmac.compare_digest(urllib.parse.unquote(key), cfg["api_key"]):
