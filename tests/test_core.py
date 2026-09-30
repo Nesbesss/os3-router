@@ -670,6 +670,17 @@ class CapacityTest(unittest.TestCase):
 
 
 class AppServerStartTest(unittest.TestCase):
+    def test_image_and_regular_tasks_share_one_auth_manager(self):
+        from codex_os3 import appserver
+        with mock.patch.object(appserver, "Server") as create, \
+                mock.patch.dict(appserver._servers, clear=True), \
+                mock.patch.dict(appserver._starting, clear=True):
+            regular = appserver.server({"codex_bin": "c"}, "main")
+            regular.codex = "c"
+            image = appserver.server({"codex_bin": "c"}, "main", image_gen=True)
+            self.assertIs(image, regular)
+            create.assert_called_once_with("c", None, images=True)
+
     def test_codex_that_fails_to_initialise_is_not_left_running(self):
         from codex_os3 import appserver
         proc = mock.Mock()
@@ -682,6 +693,28 @@ class AppServerStartTest(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 appserver.Server("codex")
         kill.assert_called_once_with(proc)
+
+    def test_shared_server_sets_image_feature_per_thread(self):
+        from codex_os3 import appserver, config
+        for enabled in (False, True):
+            srv = mock.Mock(loaded=set(), subs={})
+            def request(method, params, *args):
+                if method == "thread/start":
+                    self.assertEqual(params["config"], {
+                        "features.image_generation": enabled, "model_auto_compact_token_limit": 1234})
+                    return {"thread": {"id": "T"}}
+                if method == "turn/start":
+                    srv.subs["T"].put({"method": "item/completed", "params": {
+                        "item": {"type": "agentMessage", "text": "ok"}}})
+                    srv.subs["T"].put({"method": "turn/completed", "params": {
+                        "turn": {"status": "completed"}}})
+                return {}
+            srv.request.side_effect = request
+            srv.rate_limits.return_value = None
+            with mock.patch.object(appserver, "server", return_value=srv):
+                result = appserver.run(dict(config.load(), compact_tokens=1234), "hi", "gpt-6-luna",
+                                       image_gen=enabled)
+            self.assertEqual(result[0], "ok")
 
     def test_one_slow_account_start_does_not_block_another(self):
         import threading
