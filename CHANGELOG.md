@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.6.1 (2026-09-30)
+- Regular and image tasks now share one Codex process per account, removing competing refresh-token caches that can contribute to repeated sign-outs. Image generation is configured per thread.
+
 ## 0.6.0 (2026-09-29)
 A faster router. We measured a real router first (5,000+ requests) to see where the waiting is, and fixed what showed up.
 - **Answers start appearing about 3 seconds sooner.** A chat answer is now shown while it is still being written, not after it is finished. In our test with a 150-word answer the first words came after 4.4 s instead of 7.7 s. This is for ChatGPT (Codex) on Mac and Linux; replies that are actions, not text, arrive whole as before. You can turn it off in **Settings**.

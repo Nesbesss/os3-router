@@ -104,10 +104,13 @@ _servers, _lock, _starting = {}, threading.Lock(), {}
 
 
 def server(cfg, account=None, image_gen=False):
-    """The running codex for this account (one per account: each has its own login and threads);
-    tasks that may create images get their own one with Codex's image generation switched on."""
+    """One running Codex per account: share the auth manager across all task types.
+
+    Separate image servers used the same rotating refresh token with independent caches.
+    Image generation is enabled in the process and restricted per thread below.
+    """
     codex, acct = cfg.get("codex_bin") or "codex", account or accounts.MAIN
-    key = acct + ("+images" if image_gen else "")
+    key = acct
     with _lock:
         s = _servers.get(key)
         if s is not None and s.alive() and s.codex == codex:
@@ -118,7 +121,7 @@ def server(cfg, account=None, image_gen=False):
             s = _servers.get(key)
             if s is not None and s.alive() and s.codex == codex:
                 return s
-        s = Server(codex, None if acct == accounts.MAIN else acct, images=image_gen)
+        s = Server(codex, None if acct == accounts.MAIN else acct, images=True)
         with _lock:
             _servers[key] = s
         return s
@@ -154,9 +157,10 @@ def run(cfg, prompt, model, schema=None, alive=lambda: True, images=(), resume=N
     release = take(cfg, role, alive)
     try:
         srv = server(cfg, account, image_gen)
-        base = {"model": slug, "cwd": WORKDIR, "sandbox": "read-only", "approvalPolicy": "never"}
+        base = {"model": slug, "cwd": WORKDIR, "sandbox": "read-only", "approvalPolicy": "never",
+                "config": {"features.image_generation": bool(image_gen)}}
         if cfg.get("compact_tokens"):
-            base["config"] = {"model_auto_compact_token_limit": int(cfg["compact_tokens"])}
+            base["config"]["model_auto_compact_token_limit"] = int(cfg["compact_tokens"])
         if resume:
             if resume not in srv.loaded:  # e.g. after a router restart: load it from disk
                 srv.request("thread/resume", dict(base, threadId=resume))
