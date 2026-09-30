@@ -132,6 +132,12 @@ def install(tag, app=APP, run_tests=True):
                 raise RuntimeError(f"release {tag} does not contain version {tag.lstrip('v')}")
         if run_tests:  # the new version must pass its own offline tests on this machine
             env = {k: v for k, v in os.environ.items() if not k.startswith("CODEX_OS3_")}
+            test_home = os.path.join(tmp, "test-home")
+            os.makedirs(test_home)
+            env.update(HOME=test_home, USERPROFILE=test_home,
+                       CODEX_HOME=os.path.join(test_home, "codex"),
+                       CODEX_OS3_HOME=os.path.join(test_home, "router"))
+            env.pop("PYTHONPATH", None)
             r = subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "tests"], cwd=src, env=env,
                                capture_output=True, text=True, timeout=900)
             if r.returncode:
