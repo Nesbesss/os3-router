@@ -7,6 +7,7 @@ from .platform_util import pid_alive
 
 UI_DIR = os.path.join(os.path.dirname(__file__), "ui")
 LOCAL = ("127.0.0.1", "::1", "::ffff:127.0.0.1")
+HTTP_IO_TIMEOUT_S = 30  # stalled uploads/writes must not hold a request forever
 
 
 def loopback_host(host):
@@ -25,6 +26,10 @@ def loopback_host(host):
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     server_version = "os3-router/" + __version__
+
+    def setup(self):
+        super().setup()
+        self.connection.settimeout(HTTP_IO_TIMEOUT_S)
 
     def log_message(self, fmt, *a):  # request lines are noise; the engine logs what matters
         pass
@@ -78,7 +83,11 @@ class Handler(BaseHTTPRequestHandler):
     def handle_one_request(self):
         """Count only requests being processed: idle keep-alive connections (an open dashboard
         tab) must not keep a draining worker alive."""
-        self.raw_requestline = self.rfile.readline(65537)
+        try:
+            self.raw_requestline = self.rfile.readline(65537)
+        except OSError:
+            self.close_connection = True
+            return
         if not self.raw_requestline:
             self.close_connection = True
             return
@@ -174,6 +183,24 @@ class Handler(BaseHTTPRequestHandler):
         self.send(code, out, ctype, extra)
 
     def chat(self, cfg):
+        self._turn = None
+        self._delivery_error = None
+        try:
+            return self._chat(cfg)
+        except OSError as e:
+            self.delivery_failed(e)
+            self.close_connection = True
+
+    def delivery_failed(self, error):
+        # A model completion precedes the HTTP write. Losing the client while
+        # sending the answer must not leave a misleading successful request.
+        turn = self._turn
+        if turn is not None:
+            store.request_end(turn.rid, status="gone", error="response delivery failed")
+            store.event("response_delivery_failed", f"request {turn.rid}: {type(error).__name__}",
+                        task=turn.task, source="http", level="warn")
+
+    def _chat(self, cfg):
         if not self.api_key_ok(cfg):
             # usually an old OS3 connection (key rotated, reinstalled): the setup page explains it
             got = self.headers.get("Authorization", "").replace("Bearer ", "").strip()
@@ -182,7 +209,11 @@ class Handler(BaseHTTPRequestHandler):
                                              "into your OS3 connection (delete the old connection first)"}})
         try:
             body, _ = self.body()
+        except socket.timeout:
+            self.close_connection = True
+            return self.send(408, {"error": {"message": "request body transfer stalled; retry the request"}})
         except ValueError as e:
+            self.close_connection = True
             return self.send(400, {"error": {"message": str(e)}})
         stream = bool(body.get("stream"))
         alive = self.client_alive
@@ -199,28 +230,43 @@ class Handler(BaseHTTPRequestHandler):
                     self.wfile.write(b": ping\n\n")
                     self.wfile.flush()
                     return self.client_alive()
-                except OSError:
+                except OSError as e:
+                    self._delivery_error = e
                     return False
             alive = stream_alive
 
         turn = engine.Turn(cfg, body, alive, source=self.client_address[0])
+        self._turn = turn
         cid, created = f"chatcmpl-{uuid.uuid4().hex[:24]}", int(time.time())
         base = {"id": cid, "object": "chat.completion.chunk", "created": created, "model": turn.requested}
 
         def chunk(delta, fin=None):
             self.wfile.write(f"data: {json.dumps(dict(base, choices=[{'index': 0, 'delta': delta, 'finish_reason': fin}]))}\n\n".encode())
             self.wfile.flush()
+        if stream:
+            # A real ChatCompletionChunk opens the stream promptly. SSE comments
+            # keep a socket alive but don't open the model stream for SDK clients.
+            chunk({"role": "assistant", "content": ""})
         if stream and cfg.get("stream_chat"):  # prototype: answer text goes out while it's written
-            turn.stream_sink = lambda text: chunk({"role": "assistant", "content": text} if turn.streamed == text else {"content": text})
+            def emit_text(text):
+                try:
+                    chunk({"role": "assistant", "content": text} if turn.streamed == text else {"content": text})
+                except OSError as e:
+                    self._delivery_error = e
+                    raise engine.ClientGone() from e  # never retry a model after losing its consumer
+            turn.stream_sink = emit_text
         try:
             msg, finish = turn.run()
         except engine.ClientGone:
+            if self._delivery_error is not None:
+                self.delivery_failed(self._delivery_error)
             self.close_connection = True
             return
         except engine.EngineError as e:
             err = {"error": {"message": str(e), "type": "codex_error"}}
             if stream:
                 self.wfile.write(f"data: {json.dumps(err)}\n\ndata: [DONE]\n\n".encode())
+                self.wfile.flush()
                 self.close_connection = True
                 return
             return self.send(502, err)
@@ -245,6 +291,7 @@ class Handler(BaseHTTPRequestHandler):
             chunk({}, finish)
             self.wfile.write(b"data: [DONE]\n\n")
             self.wfile.flush()
+            store.event("response_sent", f"request {turn.rid}: stream completed", task=turn.task, source="http")
             self.close_connection = True
             return
         r = store.q("SELECT in_tok, out_tok FROM requests WHERE id=?", (turn.rid,))
@@ -252,6 +299,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send(200, {"id": cid, "object": "chat.completion", "created": created, "model": model,
                         "usage": {"prompt_tokens": i, "completion_tokens": o, "total_tokens": i + o},
                         "choices": [{"index": 0, "finish_reason": finish, "message": msg}]})
+        self.wfile.flush()
+        store.event("response_sent", f"request {turn.rid}: response completed", task=turn.task, source="http")
 
 
 class Server(ThreadingHTTPServer):

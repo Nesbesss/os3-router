@@ -179,7 +179,7 @@ class Turn:
                 extra["image_gen"] = True
         if self.backend == "codex" and engine_of(self.cfg) == "appserver":  # one long-running codex
             runner = appserver
-            if stream and self.stream_sink and not self.streamed and self.role == "chat" and not self.forced \
+            if stream and self.stream_sink and not self.streamed and self.role in ("chat", "worker") and not self.forced \
                     and self.cfg.get("stream_chat") and not P.used_computer(self.msgs):  # (no later "verify" rewrite)
                 names = [t.get("function", t).get("name", "") for t in self.tools]
                 cs = P.ContentStream(self._stream, lambda t: not P.claims_unavailable(t, names) and not P.claims_not_found(t))

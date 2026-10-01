@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.4 (2026-10-01)
+- **Streams open promptly for chats and workers.** The router sends the initial assistant chunk before waiting for the model. Worker final answers can stream as they are written; tool calls still wait for validation.
+- **Stalled HTTP transfers stop holding connections.** Uploads and response writes have a 30-second idle timeout. Failed response writes are recorded as delivery failures, and a dropped stream cancels the model without retrying it. Completed writes have a separate delivery event.
+- **Recovery recognizes rabbit-agent 0.1.15 logs.** The watchdog reads command completion and task-abort events from the new guardian component. It can also recover a quiet task after an explicit tunnel session failure, while ignoring old process logs and failures followed by a replacement tunnel.
+
 ## 0.6.3 (2026-10-01)
 - **ChatGPT requests keep working if the Codex app moves.** When a saved Codex path disappears, the router looks for a working CLI, including the copy inside ChatGPT.app. Valid custom paths stay in use. The dashboard and health checks now show when Codex is missing or cannot start.
 

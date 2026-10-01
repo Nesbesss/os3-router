@@ -44,20 +44,36 @@ def snapshot():
     resp = last_response()
     calls = json.loads(resp["calls"]) if resp and resp.get("calls") else []
     since = resp["done_ts"] if resp else now - 900
-    agent_events = os3.log_tail(since_ts=since - 5, components=("exec", "ws", "tunnel", "tunnel-ws", "main"))
-    execs = [e for e in agent_events if e.get("component") == "exec" and "completed" in e.get("message", "")
+    agent = os3.status()
+    agent_events = os3.log_tail(since_ts=since - 5,
+                                components=("exec", "guardian", "ws", "tunnel", "tunnel-ws", "main"))
+    # v0.1.15 moved CommandExecutor logs to guardian. Ignore the previous process's
+    # shutdown messages after a restart, which can otherwise restart the replacement.
+    agent_events = [e for e in agent_events if not e.get("pid") or not agent.get("pid")
+                    or e["pid"] == agent["pid"]]
+    execs = [e for e in agent_events if e.get("component") in ("exec", "guardian")
+             and "completed" in e.get("message", "")
              and e["ts"] > since]
     aborts = [e["ts"] for e in agent_events if "release_all" in e.get("message", "") and e["ts"] > since]
+    failed = [e["ts"] for e in agent_events if e.get("component") == "tunnel-ws" and e["ts"] > since
+              and (e.get("meta") or {}).get("errorCode") == "TUNNEL_SESSION_ERROR"]
+    connected = [e["ts"] for e in agent_events if e.get("component") == "tunnel"
+                 and "Tunnel pool connected" in e.get("message", "")]
+    transport_failure = max(failed, default=0)
+    if max(connected, default=0) >= transport_failure:
+        transport_failure = 0
+    request_ts = last_request_ts()
     return {
         "now": now,
         "last_response": resp and {"id": resp["id"], "ago_s": round(now - resp["done_ts"]),
                                    "result": resp["result"], "calls": calls, "task": resp["task"]},
-        "last_request_ago_s": round(now - last_request_ts()) if last_request_ts() else None,
-        "agent": os3.status(),
+        "last_request_ago_s": round(now - request_ts) if request_ts else None,
+        "agent": agent,
         "agent_status_age_s": round(os3.status_age()),
         "agent_execs_since_response": len(execs),
         "agent_aborted_task_since_response": bool(aborts),
         "agent_abort_ago_s": round(now - aborts[0]) if aborts else None,
+        "agent_transport_error_ago_s": round(now - transport_failure) if transport_failure else None,
         "agent_log_recent": [f"{e['component']} {e.get('level')} {e.get('message', '')[:120]}"
                              for e in agent_events[-12:]],
         "hangs_30m": store.q("SELECT COUNT(*) n FROM events WHERE kind IN ('retry','fix_failed','verify_failed') "
@@ -90,6 +106,11 @@ def rules(s):
             out.append({"kind": "tunnel_dead", "level": "error", "action": "restart_agent",
                         "msg": f"the agent ran our tool calls ({', '.join(resp['calls'][:4])}) but no "
                                f"follow-up request for {resp['ago_s']}s: LLM tunnel likely dead"})
+        elif quick and s.get("agent_transport_error_ago_s") is not None \
+                and s["agent_transport_error_ago_s"] >= QUIET_S:
+            out.append({"kind": "tunnel_dead", "level": "error", "action": "restart_agent",
+                        "msg": "rabbit-agent reported a tunnel session failure after our tool reply; "
+                               "no replacement tunnel or follow-up request arrived"})
         elif quick and resp["ago_s"] > QUIET_S * 2:
             out.append({"kind": "stalled", "level": "warn", "action": None,
                         "msg": f"no follow-up for {resp['ago_s']}s after {', '.join(resp['calls'][:4])}"})

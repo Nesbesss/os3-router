@@ -302,6 +302,43 @@ class Watchdog(unittest.TestCase):
     def test_dead_tunnel_after_executed_calls(self):
         self.assertIn(("tunnel_dead", "restart_agent"), self.kinds(self.snap()))
 
+    def test_explicit_tunnel_failure_recovers_without_executed_tools(self):
+        # A failed delivery can prevent tools from running in the first place.
+        s = self.snap(agent_execs_since_response=0, agent_transport_error_ago_s=130)
+        self.assertIn(("tunnel_dead", "restart_agent"), self.kinds(s))
+        s["agent_transport_error_ago_s"] = 10
+        self.assertNotIn(("tunnel_dead", "restart_agent"), self.kinds(s))
+        s.update(agent_transport_error_ago_s=130, last_request_ago_s=5)
+        self.assertEqual(self.kinds(s), [])
+        s.update(last_request_ago_s=160, last_response={"ago_s": 150, "result": "tool_call",
+                 "calls": ["ask_user"], "task": "t"})
+        self.assertEqual(self.kinds(s), [])
+
+    def test_snapshot_reads_current_guardian_and_transport_events(self):
+        now = time.time()
+        response = {"id": 1, "done_ts": now - 200, "calls": '["shell"]', "result": "tool_call", "task": "t"}
+        events = [
+            {"ts": now - 190, "pid": 12, "component": "guardian", "message": "CommandExecutor: completed"},
+            {"ts": now - 180, "pid": 11, "component": "guardian", "message": "CommandExecutor: completed release_all"},
+            {"ts": now - 170, "pid": 12, "component": "tunnel-ws", "message": "Yamux session error",
+             "meta": {"errorCode": "TUNNEL_SESSION_ERROR"}},
+        ]
+        with mock.patch.object(watchdog, "last_response", return_value=response), \
+                mock.patch.object(watchdog, "last_request_ts", return_value=now - 200), \
+                mock.patch.object(watchdog.os3, "status", return_value={"pid": 12, "running": True, "status": "connected"}), \
+                mock.patch.object(watchdog.os3, "status_age", return_value=200), \
+                mock.patch.object(watchdog.os3, "log_tail", return_value=events) as tail, \
+                mock.patch.object(watchdog.store, "q", return_value=[{"n": 0}]), \
+                mock.patch.object(watchdog.store, "latest_limits", return_value={}), \
+                mock.patch.object(watchdog.store, "kv_get", return_value=None):
+            snapshot = watchdog.snapshot()
+            self.assertIn("guardian", tail.call_args.kwargs["components"])
+            self.assertEqual(snapshot["agent_execs_since_response"], 1)
+            self.assertFalse(snapshot["agent_aborted_task_since_response"])
+            self.assertAlmostEqual(snapshot["agent_transport_error_ago_s"], 170, delta=1)
+            events.append({"ts": now - 160, "pid": 12, "component": "tunnel", "message": "Tunnel pool connected: 2/2 up"})
+            self.assertIsNone(watchdog.snapshot()["agent_transport_error_ago_s"])
+
     def test_dead_tunnel_on_abort(self):
         s = self.snap(last_response={"ago_s": 60, "result": "tool_call", "calls": ["shell"], "task": "t"},
                       last_request_ago_s=65, agent_aborted_task_since_response=True, agent_abort_ago_s=50)
@@ -1162,6 +1199,29 @@ class AccountsTest(unittest.TestCase):
             t.codex("p", stream=True)
         self.assertEqual(run.call_args.kwargs["account"], "2")
         self.assertIn("on_text", run.call_args.kwargs)
+
+    def test_worker_streams_final_answer_but_holds_tool_arguments(self):
+        from codex_os3 import appserver, engine
+        body = {"model": "gpt-6-sol", "messages": [{"role": "user", "content": "q"}], "tools": TOOLS}
+        content = "Here is the completed investigation with evidence. " * 6
+        for kind in ("final", "tool_call"):
+            with self.subTest(kind=kind):
+                sent = []
+                t = engine.Turn(dict(self.cfg.load(), engine="appserver", stream_chat=True), body, lambda: True)
+                t.role, t.account, t.stream_sink = "worker", "2", sent.append
+                raw = json.dumps({"kind": kind, "content": content, "calls": []})
+
+                def run(*args, **kwargs):
+                    self.assertEqual(kwargs["account"], "2")
+                    feed = kwargs["on_text"]
+                    for i in range(0, len(raw), 37):
+                        feed(raw[i:i + 37])
+                    # Check before the model call returns, not just the final HTTP reply.
+                    self.assertEqual("".join(sent), content if kind == "final" else "")
+                    return raw, {}, "T", None
+
+                with mock.patch.object(appserver, "run", side_effect=run):
+                    t.codex("p", stream=True)
 
     def test_owner_finds_thread_in_its_account(self):
         open(os.path.join(self.a.root(), "2", "sessions", "2026", "rollout-x-T42.jsonl"), "w").close()
