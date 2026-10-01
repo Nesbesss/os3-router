@@ -1200,6 +1200,50 @@ class AccountsTest(unittest.TestCase):
         self.assertEqual(run.call_args.kwargs["account"], "2")
         self.assertIn("on_text", run.call_args.kwargs)
 
+    def test_capacity_retries_keep_account_and_resume(self):
+        from codex_os3 import appserver, engine
+        body = {"messages": [{"role": "user", "content": "q"}], "tools": TOOLS}
+        t = engine.Turn(dict(self.cfg.load(), engine="appserver"), body, lambda: True)
+        t.account = "2"
+        busy = RuntimeError("Selected model is at capacity. Please try a different model.")
+        with mock.patch.object(appserver, "run", side_effect=[busy, busy, ("{}", {}, "T", None)]) as run, \
+                mock.patch.object(engine.time, "sleep") as sleep:
+            t.codex("p", resume="T-before")
+        self.assertEqual(run.call_count, 3)
+        self.assertEqual(sleep.call_count, 6)
+        self.assertTrue(all(c.kwargs["account"] == "2" and c.args[6] == "T-before" for c in run.call_args_list))
+
+    def test_capacity_exhaustion_does_not_retry_a_resumed_request_fresh(self):
+        from codex_os3 import appserver, engine
+        body = {"messages": [{"role": "user", "content": "q"}], "tools": TOOLS}
+        t = engine.Turn(dict(self.cfg.load(), engine="appserver"), body, lambda: True)
+        with mock.patch.object(appserver, "run", side_effect=RuntimeError("Selected model is at capacity")) as run, \
+                mock.patch.object(engine.time, "sleep"), \
+                mock.patch.object(engine.sessions, "plan", return_value=(False, "T-before", t.msgs)):
+            with self.assertRaises(engine.EngineError):
+                t.run()
+        self.assertEqual(run.call_count, 3)
+        self.assertEqual(store.q("SELECT status FROM requests WHERE id=?", (t.rid,))[0]["status"], "error")
+
+    def test_capacity_retry_stops_for_lost_consumer_and_never_retries_other_errors(self):
+        from codex_os3 import appserver, engine
+        from codex_os3.codex_runner import ClientGone, SignedOut
+        body = {"messages": [{"role": "user", "content": "q"}], "tools": TOOLS}
+        for error, alive, streamed, expected in [
+                (RuntimeError("Selected model is at capacity"), False, "", ClientGone),
+                (RuntimeError("Selected model is at capacity"), True, "already emitted", RuntimeError),
+                (SignedOut("login expired"), True, "", SignedOut),
+                (RuntimeError("connection refused"), True, "", RuntimeError)]:
+            with self.subTest(error=str(error), streamed=streamed):
+                t = engine.Turn(dict(self.cfg.load(), engine="appserver"), body, lambda: alive)
+                t.streamed = streamed
+                with mock.patch.object(appserver, "run", side_effect=error) as run, \
+                        mock.patch.object(engine.time, "sleep") as sleep:
+                    with self.assertRaises(expected):
+                        t.codex("p")
+                self.assertEqual(run.call_count, 1)
+                sleep.assert_not_called()
+
     def test_worker_streams_final_answer_but_holds_tool_arguments(self):
         from codex_os3 import appserver, engine
         body = {"model": "gpt-6-sol", "messages": [{"role": "user", "content": "q"}], "tools": TOOLS}
