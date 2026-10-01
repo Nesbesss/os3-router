@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.6.5 (unreleased)
+## 0.6.5 (2026-10-01)
 - **Windows updates have their own taskbar window.** Downloading, testing, installing and restarting stay visible while the router reloads. The taskbar shows activity during installation and an error state if the update fails. The window keeps the final result until you close it; closing it does not cancel the update. Reopen it from the tray's Update progress item.
 - **An update is complete only after the updated router answers its health check.** Failed file replacement restores the previous files. Failed startup attempts restore the previous version before Windows starts a fallback worker. Failures remain visible in Settings and the update window, with a retry option.
 - **Windows installation checks the replacement worker and version**, rather than accepting a reply from the old router, and respects the saved port during upgrades. Startup readiness no longer waits for optional Codex status checks. Shortcut and tray refresh errors are recorded and retried; manual updates refresh them even with automatic updates off.
