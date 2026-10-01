@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.5 (unreleased)
+- **Windows updates have their own taskbar window.** Downloading, testing, installing and restarting stay visible while the router reloads. The taskbar shows activity during installation and an error state if the update fails. The window keeps the final result until you close it; closing it does not cancel the update. Reopen it from the tray's Update progress item.
+- **An update is complete only after the updated router answers its health check.** Failed file replacement restores the previous files. Failed startup attempts restore the previous version before Windows starts a fallback worker. Failures remain visible in Settings and the update window, with a retry option.
+- **Windows installation checks the replacement worker and version**, rather than accepting a reply from the old router, and respects the saved port during upgrades. Startup readiness no longer waits for optional Codex status checks. Shortcut and tray refresh errors are recorded and retried; manual updates refresh them even with automatic updates off.
+- Startup rollback requires a supervisor running this version; worker reloads alone keep an older supervisor loaded. These checks improve specific failure paths, but do not guarantee every Windows configuration or recover the affected four-hour update incident without its diagnostics.
+
 ## 0.6.4 (2026-10-01)
 - **Streams open promptly for chats and workers.** The router sends the initial assistant chunk before waiting for the model. Worker final answers can stream as they are written; tool calls still wait for validation.
 - **Stalled HTTP transfers stop holding connections.** Uploads and response writes have a 30-second idle timeout. Failed response writes are recorded as delivery failures, and a dropped stream cancels the model without retrying it. Completed writes have a separate delivery event.

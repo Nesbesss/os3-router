@@ -1,16 +1,21 @@
 """Settings update controls: a request is not an installed release."""
-import os, time, unittest
+import os, tempfile, time, unittest
 from unittest import mock
 
-from codex_os3 import store, ui_api, updater
+from codex_os3 import config, store, ui_api, updater, update_progress
 
 
 class UpdateControlsTest(unittest.TestCase):
     def setUp(self):
         self.values = {}
+        home = tempfile.TemporaryDirectory()
+        self.addCleanup(home.cleanup)
         self.patches = [
+            mock.patch.object(config, "HOME", home.name),
+            mock.patch.object(update_progress, "open_window"),
             mock.patch.object(updater, "managed", return_value=True),
             mock.patch.object(updater, "__version__", "0.4.14"),
+            mock.patch.object(updater, "update_apps"),
             mock.patch.object(store, "kv_get", side_effect=lambda k, default=None: self.values.get(k, default)),
             mock.patch.object(store, "kv_set", side_effect=lambda k, v: self.values.__setitem__(k, v)),
             mock.patch.object(store, "event"),
@@ -32,17 +37,24 @@ class UpdateControlsTest(unittest.TestCase):
         code, queued = self.call("POST", "updates/install")
         self.assertEqual(code, 202)
         self.assertEqual(queued["manual"]["state"], "queued")
-        with mock.patch.object(updater, "install") as install:
+        def install_result(tag):
+            update_progress.set_state("switching", tag, "restart", "Restarting")
+        with mock.patch.object(updater, "install", side_effect=install_result) as install:
             updater.maybe(self.cfg)
             install.assert_called_once_with("v0.4.15")
         self.assertEqual(self.call("GET", "updates")[1]["manual"]["state"], "switching")
+        update_progress.confirm_running("0.4.15")
         with mock.patch.object(updater, "__version__", "0.4.15"):
             self.assertEqual(self.call("GET", "updates")[1]["manual"]["state"], "installed")
 
     def test_failed_manual_install_can_be_retried(self):
         self.values["update_latest"] = "v0.4.15"
         self.call("POST", "updates/install")
-        with mock.patch.object(updater, "install", side_effect=RuntimeError("tests failed")):
+        def fail_install(tag):
+            update_progress.set_state("installing", tag, "tests", "Testing")
+            update_progress.fail("tests failed")
+            raise RuntimeError("tests failed")
+        with mock.patch.object(updater, "install", side_effect=fail_install):
             updater.maybe(self.cfg)
         failed = self.call("GET", "updates")[1]["manual"]
         self.assertEqual(failed["state"], "failed")

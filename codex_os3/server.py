@@ -121,6 +121,10 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, {"object": "list", "data": [
                 {"id": m, "object": "model", "created": 0, "owned_by": "os3-router"} for m in ids]})
         if path in ("/health", "/v1"):
+            # Readiness must not wait up to 30 s for optional CLI status checks.
+            # Keep the existing diagnostic health response for ordinary callers.
+            if path == "/health" and urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("ready") == ["1"]:
+                return self.send(200, {"status": "ok", "version": __version__, "pid": os.getpid()})
             codex = ui_api.codex_info(cfg)
             # Keep service liveness independent of an optional backend: the supervisor must not restart
             # a responsive Claude-only router or loop on a broken Codex installation.
@@ -356,6 +360,8 @@ def serve_worker():
     threading.Thread(target=watchdog.loop, args=(wd_stop,), daemon=True, name="watchdog").start()
     engine.log(f"worker {os.getpid()} listening on {cfg['bind']}:{cfg['port']}")
     store.event("worker_start", f"worker {os.getpid()} on {cfg['bind']}:{cfg['port']}", source="worker")
+    from . import update_progress
+    threading.Thread(target=update_progress.confirm_worker, args=(cfg,), daemon=True, name="update-health").start()
     srv.serve_forever(poll_interval=0.5)
     # Linux spreads SO_REUSEPORT connections over both workers' sockets: whatever already waits
     # in this socket's queue would be reset by close(), so serve it first

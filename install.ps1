@@ -11,6 +11,14 @@ $HomeDir = if ($env:CODEX_OS3_HOME) { $env:CODEX_OS3_HOME } else { Join-Path $en
 $AppDir = Join-Path $HomeDir "app"
 $TaskName = "codex-os3 router"
 $TrayTask = "codex-os3 tray"
+# Upgrades must probe the configured port, not assume that preflight chose 11435.
+if (-not $Port) {
+    try { $Port = [int](Get-Content (Join-Path $HomeDir "config.json") -Raw | ConvertFrom-Json).port } catch {}
+}
+function Test-InstallHealth($health, $expectedVersion, $beforePid, $wasRunning) {
+    return $health.status -eq "ok" -and $health.version -eq $expectedVersion -and
+        $health.pid -gt 0 -and (-not $wasRunning -or $health.pid -ne $beforePid)
+}
 
 # (ASCII marks: the classic Windows console font has no check mark)
 function Ok($m) { Write-Host "     [ok] " -ForegroundColor Green -NoNewline; Write-Host $m }
@@ -47,9 +55,15 @@ function Restore-Previous {
     $old = "$AppDir.old"
     if ($script:Swapped -and (Test-Path $old)) {
         try {
+            # Remove files introduced by the failed replacement, including stale bytecode.
+            foreach ($file in @(Get-ChildItem $AppDir -File -Recurse)) {
+                $relative = $file.FullName.Substring($AppDir.Length + 1)
+                if (-not (Test-Path (Join-Path $old $relative))) { Remove-Item $file.FullName -Force }
+            }
             Copy-Item (Join-Path $old "*") $AppDir -Recurse -Force
-            Write-Host "  The previous version was put back, so the router you had keeps working." -ForegroundColor DarkGray
-        } catch {}
+            New-Item -ItemType File -Force -Path (Join-Path $HomeDir "reload.request") | Out-Null
+            Write-Host "  The previous files were restored. A router reload was requested; check its status before retrying." -ForegroundColor DarkGray
+        } catch { Warn "Could not restore the previous files: $($_.Exception.Message). The backup remains at $old." }
     }
 }
 function Die($m) {
@@ -205,7 +219,8 @@ if ($env:CODEX_OS3_SRC) {
 }
 if (-not (Test-Path (Join-Path $New "codex_os3\__init__.py"))) { Die "download looks incomplete" }
 $Running = $false
-try { Invoke-RestMethod "http://127.0.0.1:$(if ($Port) { $Port } else { 11435 })/health" -TimeoutSec 2 | Out-Null; $Running = $true } catch {}
+$BeforePid = $null
+try { $before = Invoke-RestMethod "http://127.0.0.1:$(if ($Port) { $Port } else { 11435 })/health?ready=1" -TimeoutSec 2; $BeforePid = $before.pid; $Running = $true } catch {}
 $OldVersion = ""
 try { $OldVersion = ([regex]'__version__ = "([^"]+)"').Match((Get-Content (Join-Path $AppDir "codex_os3\__init__.py") -Raw)).Groups[1].Value } catch {}
 $Old = "$AppDir.old"
@@ -237,7 +252,9 @@ $Port = [int](& $Py -c "from codex_os3 import config; print(config.load()['port'
 # --- service: a Task Scheduler task at logon, restarted if it stops ---------------------
 Step "Background service"
 if ($Running) {
-    & $Py -m codex_os3 reload | Out-Null; Ok "upgraded (Windows reload has a ~1 s gap)"
+    & $Py -m codex_os3 reload | Out-Null
+    if ($LASTEXITCODE -ne 0) { Die "could not request the updated router to start" }
+    Note "reload requested; waiting for the replacement worker"
 } else {
     [Environment]::SetEnvironmentVariable("CODEX_OS3_HOME", $HomeDir, "User")
     try {
@@ -258,9 +275,14 @@ if ($Running) {
         Ok "starts at every logon (startup list); it will not restart itself if it stops"
     }
 }
+$ExpectedVersion = ([regex]'__version__ = "([^"]+)"').Match((Get-Content (Join-Path $AppDir "codex_os3\__init__.py") -Raw)).Groups[1].Value
 $up = $false
-for ($i = 0; $i -lt 30 -and -not $up; $i++) {
-    try { Invoke-RestMethod "http://127.0.0.1:$Port/health" -TimeoutSec 2 | Out-Null; $up = $true } catch { Start-Sleep 1 }
+for ($i = 0; $i -lt 60 -and -not $up; $i++) {
+    try {
+        $health = Invoke-RestMethod "http://127.0.0.1:$Port/health?ready=1" -TimeoutSec 2
+        $up = Test-InstallHealth $health $ExpectedVersion $BeforePid $Running
+    } catch {}
+    if (-not $up) { Start-Sleep 1 }
 }
 if (-not $up) {
     Get-Content (Join-Path $HomeDir "service.log") -Tail 25 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "    $_" }
@@ -279,7 +301,7 @@ Step "App and OS3 connection"
 # --- tray app --------------------------------------------------------------------------
 if (-not $NoTray) {
     $tray = Join-Path $AppDir "app\windows\tray.ps1"
-    $a = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$tray`""
+    $a = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -STA -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$tray`""
     $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
     $trigger.Delay = "PT20S"  # let the desktop finish loading: a tray started the instant of logon can die with 0xc0000142
     $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive  # the tray needs the user's desktop
@@ -292,7 +314,11 @@ if (-not $NoTray) {
 
 # --- app window: Start menu entry ------------------------------------------------------
 $OpenApp = Join-Path $AppDir "app\windows\open-app.ps1"
-try { & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $AppDir "app\windows\shortcut.ps1"); Ok "Start menu: OS3 Router" }
+try {
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $AppDir "app\windows\shortcut.ps1")
+    if ($LASTEXITCODE -ne 0) { throw "shortcut creation failed" }
+    Ok "Start menu: OS3 Router"
+}
 catch { Warn "could not create the Start menu entry: $_" }
 
 & $Py -m codex_os3 setup-info
