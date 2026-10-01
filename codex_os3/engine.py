@@ -8,7 +8,7 @@ main codex call (resumed session when possible, one fresh retry on failure/hang)
 import json, os, time, uuid
 
 from . import accounts, appserver, claude_runner, codex_runner, config, notify, prompt as P, repair, roles, sessions, store
-from .codex_runner import ClientGone, CodexHung, SignedOut, UsageLimit
+from .codex_runner import ClientGone, CodexHung, ModelCapacity, SignedOut, UsageLimit
 
 
 class EngineError(RuntimeError):
@@ -184,8 +184,25 @@ class Turn:
                 names = [t.get("function", t).get("name", "") for t in self.tools]
                 cs = P.ContentStream(self._stream, lambda t: not P.claims_unavailable(t, names) and not P.claims_not_found(t))
                 extra["on_text"] = cs.feed  # add to the options: replacing them lost the account
-        text, usage, thread, limits = runner.run(
-            self.cfg, prompt, self.model, self.schema, self.alive, images, resume, keep, role=self.role, **extra)
+        for attempt in range(3):
+            try:
+                text, usage, thread, limits = runner.run(
+                    self.cfg, prompt, self.model, self.schema, self.alive, images, resume, keep, role=self.role, **extra)
+                break
+            except RuntimeError as error:
+                # This is model availability, not a usage limit or authentication
+                # failure. Retry the same decision only before any text was sent.
+                if self.backend != "codex" or type(error) is not RuntimeError or self.streamed \
+                        or "selected model is at capacity" not in str(error).lower():
+                    raise
+                if attempt == 2:
+                    raise ModelCapacity(str(error)) from error
+                delay = (2, 4)[attempt]
+                self.ev("model_capacity_retry", f"{self.model} at capacity; retry {attempt + 1}/2 in {delay}s", "warn")
+                for _ in range(delay):
+                    if not self.alive():
+                        raise ClientGone()
+                    time.sleep(1)
         if self.backend == "codex":
             limits_key = accounts.backend_key(self.account)
         else:
@@ -334,6 +351,8 @@ class Turn:
                     mode = "fallback"
                     raw, self.tid = self.codex(prompt, images.files, keep=self.tracked)
             except Exception as e:
+                if isinstance(e, ModelCapacity):
+                    raise  # capacity retries already exhausted; resuming fresh cannot add another budget
                 if not thread and not isinstance(e, CodexHung):
                     raise
                 self.ev("retry", f"{type(e).__name__}: {str(e)[:120]}; retrying fresh", "warn")
