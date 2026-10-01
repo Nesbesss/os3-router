@@ -26,13 +26,17 @@ class HTTPTransport(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="os3-http-test-") as home:
             env = dict(os.environ, HOME=home, USERPROFILE=home, CODEX_OS3_HOME=home,
                        CODEX_HOME=os.path.join(home, "codex"))
-            result = subprocess.run([sys.executable, "-c", SCRIPT, case], env=env,
-                                    capture_output=True, text=True, timeout=20)
+            try:
+                result = subprocess.run([sys.executable, "-c", SCRIPT, case], env=env,
+                                        capture_output=True, text=True, timeout=25)
+            except subprocess.TimeoutExpired as error:
+                self.fail(f"HTTP case {case} stalled: {error.stderr!r}")
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
 SCRIPT = textwrap.dedent('''
-    import http.client, json, socket, struct, sys, threading, time
+    import faulthandler, http.client, json, socket, struct, sys, threading, time
+    faulthandler.dump_traceback_later(10)
     from unittest import mock
     from codex_os3 import config, server, store
 
@@ -55,7 +59,10 @@ SCRIPT = textwrap.dedent('''
 
     with mock.patch.object(server.config, "load", return_value=cfg), \\
          mock.patch.object(server.engine, "Turn", DelayedTurn), \\
-         mock.patch.object(server, "HTTP_IO_TIMEOUT_S", 0.5):
+         mock.patch.object(server, "HTTP_IO_TIMEOUT_S", 0.5), \\
+         mock.patch.object(socket, "getfqdn", return_value="localhost"):
+        # HTTPServer resolves its display name during bind. Transport tests must
+        # not depend on the runner's external DNS configuration.
         srv = server.Server(("127.0.0.1", 0))
         thread = threading.Thread(target=srv.serve_forever, daemon=True)
         thread.start()
@@ -109,6 +116,7 @@ SCRIPT = textwrap.dedent('''
             srv.shutdown()
             srv.server_close()
             thread.join(3)
+            faulthandler.cancel_dump_traceback_later()
 ''')
 
 
