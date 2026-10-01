@@ -656,17 +656,17 @@ let UPDATE_BUSY = false;
 async function refreshUpdates() {
   if (!$("#upmsg") || UPDATE_BUSY) return;
   try {
-    const u = await api("updates"), m = u.manual || {};
+    const u = await api("updates"), p = u.progress || {}, m = p.state ? p : (u.manual || {});
     const active = ["queued", "installing", "switching"].includes(m.state);
     $("#upinstall").hidden = !u.managed || !u.available;
     $("#upinstall").disabled = !u.available || active;
     $("#upinstall").textContent = m.state === "failed" && m.tag === u.latest ? "Retry update now" : "Install update now";
-    $("#upcheck").disabled = !u.managed;
+    $("#upcheck").disabled = !u.managed || active;
     $("#upmsg").textContent = !u.managed ? "Manual updates are available for installer-made installs. Update this checkout with git."
       : m.state === "failed" && m.tag === u.latest ? `Update to ${m.tag} failed: ${m.error}`
       : m.state === "queued" ? `Update to ${m.tag} requested. Waiting for the updater.`
-      : m.state === "installing" ? `Installing ${m.tag} and running its tests…`
-      : m.state === "switching" ? `Installed ${m.tag} on disk. Waiting for the running router to switch versions.`
+      : m.state === "installing" ? (m.message || `Installing ${m.tag} and running its tests…`)
+      : m.state === "switching" ? (m.message || `Installed ${m.tag} on disk. Waiting for the running router to switch versions.`)
       : m.state === "installed" && !u.available ? `OS3 Router ${u.current} is running.`
       : u.available ? `${u.latest} is available. Running ${u.current}.`
       : u.latest ? `Running ${u.current}; latest known release is ${u.latest}.`

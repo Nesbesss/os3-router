@@ -4,7 +4,7 @@ copied over the install (previous version kept in app.prev) and the service relo
 downtime. Only for installs made by the installer (~/.codex-os3/app); off with auto_update=false."""
 import io, json, os, plistlib, shutil, subprocess, sys, tarfile, tempfile, time, urllib.error, urllib.parse, urllib.request
 
-from . import __version__, config, store
+from . import __version__, config, platform_util, store, update_progress
 
 REPO = "Nesbesss/os3-router"
 EVERY_S = 1800
@@ -83,6 +83,9 @@ def managed():
 def manual_state():
     """A requested update is installed only when this running version confirms it."""
     state = store.kv_get("manual_update") or {}
+    progress = update_progress.get()
+    if progress.get("tag") == state.get("tag") and progress.get("state"):
+        return {k: progress[k] for k in ("state", "tag", "error") if k in progress}
     if state.get("tag") and ver(__version__) >= ver(state["tag"]):
         return {"state": "installed", "tag": state["tag"]}
     return state
@@ -92,7 +95,8 @@ def update_status(cfg):
     tag = store.kv_get("update_latest")
     return {"managed": managed(), "current": __version__, "latest": tag,
             "available": bool(tag and ver(tag) > ver(__version__)),
-            "automatic": bool(cfg.get("auto_update", True)), "manual": manual_state()}
+            "automatic": bool(cfg.get("auto_update", True)), "manual": manual_state(),
+            "progress": update_progress.get()}
 
 
 def check_now(cfg):
@@ -112,16 +116,38 @@ def request_update(cfg):
     if not tag or ver(tag) <= ver(__version__):
         raise ValueError("No newer release is known. Choose Find new updates first.")
     state = manual_state().get("state")
-    if state in ("queued", "installing", "switching"):
+    if state in ("queued", "installing", "switching") or update_progress.get().get("state") in update_progress.ACTIVE:
         raise ValueError("An update is already in progress.")
     store.kv_set("manual_update", {"state": "queued", "tag": tag})
+    update_progress.set_state("queued", tag, "queued", f"Update to {tag} requested. Waiting for the updater.")
+    update_progress.open_window(APP)
     store.event("update", f"manual update to {tag} requested", source="ui")
     return update_status(cfg)
 
 
+def restore_previous(app=APP):
+    """Restore in place: Windows keeps the running app directory open."""
+    prev = app + ".prev"
+    if not os.path.isfile(os.path.join(prev, "codex_os3", "__init__.py")):
+        raise RuntimeError("No complete previous installation is available.")
+    for root, dirs, files in os.walk(app, topdown=False):
+        backup = os.path.join(prev, os.path.relpath(root, app))
+        for name in files:
+            if not os.path.exists(os.path.join(backup, name)):
+                os.unlink(os.path.join(root, name))
+        for name in dirs:
+            if not os.path.exists(os.path.join(backup, name)):
+                shutil.rmtree(os.path.join(root, name))
+    shutil.copytree(prev, app, dirs_exist_ok=True)
+
+
 def install(tag, app=APP, run_tests=True):
-    tmp = tempfile.mkdtemp(prefix="os3-router-update-")
+    update_progress.set_state("installing", tag, "download", f"Downloading OS3 Router {tag}…")
+    update_progress.open_window(app)
+    tmp = None
+    copying = False
     try:
+        tmp = tempfile.mkdtemp(prefix="os3-router-update-")
         with tarfile.open(fileobj=io.BytesIO(_get(f"https://codeload.github.com/{REPO}/tar.gz/refs/tags/{tag}"))) as t:
             safe = [m for m in t.getmembers() if not (m.name.startswith(("/", "\\")) or ".." in m.name.split("/")
                                                       or m.issym() or m.islnk())]
@@ -131,6 +157,7 @@ def install(tag, app=APP, run_tests=True):
             if f'"{tag.lstrip("v")}"' not in f.read():
                 raise RuntimeError(f"release {tag} does not contain version {tag.lstrip('v')}")
         if run_tests:  # the new version must pass its own offline tests on this machine
+            update_progress.set_state("installing", tag, "tests", "Checking the new version with its offline tests…")
             env = {k: v for k, v in os.environ.items() if not k.startswith("CODEX_OS3_")}
             test_home = os.path.join(tmp, "test-home")
             os.makedirs(test_home)
@@ -139,16 +166,36 @@ def install(tag, app=APP, run_tests=True):
                        CODEX_OS3_HOME=os.path.join(test_home, "router"))
             env.pop("PYTHONPATH", None)
             r = subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "tests"], cwd=src, env=env,
-                               capture_output=True, text=True, timeout=900)
+                               capture_output=True, text=True, timeout=900, **platform_util.no_window_kwargs())
             if r.returncode:
                 raise RuntimeError("new version failed its tests: " + (r.stderr or r.stdout)[-400:])
+        update_progress.set_state("installing", tag, "backup", "Keeping a copy of the previous version…")
         prev = app + ".prev"
         shutil.rmtree(prev, ignore_errors=True)
         shutil.copytree(app, prev)
+        update_progress.set_state("installing", tag, "copy", "Installing the checked update…")
+        copying = True
         shutil.copytree(src, app, dirs_exist_ok=True)
+        # Publish before requesting reload: the new worker can start immediately.
+        update_progress.set_state("switching", tag, "restart",
+                                  "Waiting for the updated router to start and answer its health check…")
+        manual = store.kv_get("manual_update") or {}
+        if manual.get("tag") == tag:
+            store.kv_set("manual_update", {"state": "switching", "tag": tag})
+        open(os.path.join(config.HOME, "reload.request"), "w").close()
+    except Exception as e:
+        message = f"Update to {tag} failed: {type(e).__name__}: {e}"[:300]
+        if copying:
+            try:
+                restore_previous(app)
+                message += " The previous files were restored."
+            except Exception as rollback_error:
+                message += f" Restoring the previous files also failed: {rollback_error}"[:200]
+        update_progress.fail(message)
+        raise
     finally:
-        shutil.rmtree(tmp, ignore_errors=True)
-    open(os.path.join(config.HOME, "reload.request"), "w").close()  # zero-downtime switch
+        if tmp:
+            shutil.rmtree(tmp, ignore_errors=True)
 
 
 def update_apps(tag):
@@ -193,9 +240,15 @@ def update_apps(tag):
     elif sys.platform == "win32":  # Start menu entry (installs updated from before 0.4.1 lack it), new tray
         subprocess.run(["powershell.exe", "-NoProfile", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File",
                         os.path.join(APP, "app", "windows", "shortcut.ps1")], capture_output=True, timeout=120,
-                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        for a in ("/End", "/Run"):
-            subprocess.run(["schtasks", a, "/TN", "codex-os3 tray"], capture_output=True, timeout=30)
+                       check=True, **platform_util.no_window_kwargs())
+        # -NoTray installs have no task to restart. Do not turn that into an update failure.
+        task = subprocess.run(["schtasks", "/Query", "/TN", "codex-os3 tray"],
+                              capture_output=True, timeout=30, **platform_util.no_window_kwargs())
+        if task.returncode == 0:
+            subprocess.run(["schtasks", "/End", "/TN", "codex-os3 tray"],
+                           capture_output=True, timeout=30, **platform_util.no_window_kwargs())
+            subprocess.run(["schtasks", "/Run", "/TN", "codex-os3 tray"],
+                           capture_output=True, timeout=30, check=True, **platform_util.no_window_kwargs())
     elif sys.platform.startswith("linux"):  # app-menu entry for the OS3 Router app window
         d = os.path.expanduser("~/.local/share/applications")
         os.makedirs(d, exist_ok=True)
@@ -229,18 +282,33 @@ def maybe(cfg):
     """Called from the watchdog loop (one owner at a time)."""
     if not managed():
         return
+    progress = update_progress.get()
+    if progress.get("state") == "installing" and progress.get("pid") != os.getpid():
+        message = "The update was interrupted before restart. Completion is unconfirmed."
+        if progress.get("phase") == "copy":
+            try:
+                restore_previous()
+                message += " The previous files were restored."
+            except Exception as e:
+                message += f" Could not restore the previous files: {e}"[:200]
+        update_progress.fail(message + " Check Settings before retrying.")
+    elif progress.get("state") in update_progress.ACTIVE:
+        return  # Do not install again while a reload is pending.
     manual = store.kv_get("manual_update") or {}
     if manual.get("state") == "queued":
         tag = manual["tag"]
         if ver(tag) <= ver(__version__):
-            store.kv_set("manual_update", {"state": "installed", "tag": tag})
+            update_progress.set_state("switching", tag, "restart", "Checking the running router before confirming this update…")
+            update_progress.confirm_worker(cfg)
             return
         store.kv_set("manual_update", {"state": "installing", "tag": tag})
         store.kv_set("update_checked", time.time())  # avoid a second automatic install while switching
         try:
             store.event("update", f"manually installing {tag}", source="updater")
             install(tag)
-            store.kv_set("manual_update", {"state": "switching", "tag": tag})
+            # Real installs publish switching before reload; do not overwrite a confirmed result.
+            if (store.kv_get("manual_update") or {}).get("state") == "installing":
+                store.kv_set("manual_update", {"state": "switching", "tag": tag})
             store.event("update", f"{tag} installed on disk, switching over", source="updater")
         except Exception as e:
             store.kv_set("manual_update", {"state": "failed", "tag": tag,
@@ -248,18 +316,22 @@ def maybe(cfg):
             store.event("update_failed", f"manual {tag}: {type(e).__name__}: {e}"[:300],
                         source="updater", level="warn")
         return
-    if not cfg.get("auto_update", True):
+    if not cfg.get("auto_update", True) and sys.platform != "win32":
         return
-    if store.kv_get("codex_outdated"):  # Codex refused a model as too old: update it right away
-        store.kv_set("codex_outdated", None)
-        _update_codex(cfg)
-    if store.kv_get("apps_version") != __version__:  # first run of this version: bring the apps along
-        store.kv_set("apps_version", __version__)  # (done by the new version, whatever did the update)
+    # Manual updates must refresh Windows shortcuts/tray even when automatic updates are off.
+    if store.kv_get("apps_version") != __version__ and time.time() - (store.kv_get("apps_retry") or 0) >= 300:
+        store.kv_set("apps_retry", time.time())
         try:
             update_apps("v" + __version__)
+            store.kv_set("apps_version", __version__)
             store.event("update", f"menu bar / tray app updated to {__version__}", source="updater")
         except Exception as e:
             store.event("update_failed", f"menu bar / tray app: {type(e).__name__}: {e}"[:300], source="updater", level="warn")
+    if not cfg.get("auto_update", True):
+        return
+    if store.kv_get("codex_outdated"):
+        store.kv_set("codex_outdated", None)
+        _update_codex(cfg)
     if time.time() - (store.kv_get("update_checked") or 0) < EVERY_S:
         return
     store.kv_set("update_checked", time.time())

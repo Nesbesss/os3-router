@@ -8,7 +8,7 @@ refused connection. Windows has no SO_REUSEPORT: there the old worker stops list
 first and the new one starts right after (a gap of about a second)."""
 import json, os, signal, socket, subprocess, sys, threading, time, urllib.request
 
-from . import config, engine, platform_util, sleep_control, store
+from . import config, engine, platform_util, sleep_control, store, update_progress, updater
 
 PIDFILE = os.path.join(config.HOME, "supervisor.pid")
 RELOAD_FILE = os.path.join(config.HOME, "reload.request")
@@ -33,13 +33,35 @@ def _healthy(cfg, pid, timeout=40):
     end = time.time() + timeout
     while time.time() < end:
         try:
-            with urllib.request.urlopen(f"http://{host}:{cfg['port']}/health", timeout=2) as r:
-                if json.loads(r.read()).get("pid") == pid:
+            with urllib.request.urlopen(f"http://{host}:{cfg['port']}/health?ready=1", timeout=2) as r:
+                health = json.loads(r.read())
+                if health.get("status") == "ok" and health.get("pid") == pid:
+                    progress = update_progress.get()
+                    if progress.get("state") == "switching":
+                        ver = updater.ver
+                        if ver(health.get("version", "")) < ver(progress["tag"]):
+                            time.sleep(0.3)
+                            continue
+                    update_progress.confirm_running(health.get("version", ""))
                     return True
         except Exception:
             pass
         time.sleep(0.3)
     return False
+
+
+def _recover_failed_update():
+    """Restore checked files before starting a fallback Windows worker."""
+    if update_progress.get().get("state") != "switching":
+        return
+    message = "The updated router did not pass its startup health check."
+    try:
+        updater.restore_previous()
+        message += " The previous files were restored; restarting the previous version."
+    except Exception as e:
+        message += f" Could not restore the previous files: {e}"[:200]
+    update_progress.fail(message)
+    store.event("update_failed", message, source="supervisor", level="error")
 
 
 def already_running(cfg):
@@ -76,6 +98,12 @@ def run():
     signal.signal(signal.SIGINT, lambda *_: stop.set())
 
     worker = _spawn()
+    if update_progress.get().get("state") == "switching":
+        if not _healthy(cfg, worker.pid):
+            worker.kill()
+            worker.wait(timeout=10)
+            _recover_failed_update()
+            worker = _spawn()
     started, misses, last_check, crashes = time.time(), 0, 0.0, 0
     engine.log(f"supervisor {os.getpid()} started worker {worker.pid}")
     store.event("service_start", f"supervisor {os.getpid()}", source="supervisor")
@@ -110,10 +138,14 @@ def run():
                 store.event("reload", f"worker swapped to {new.pid}", source="supervisor")
             elif REUSEPORT:
                 new.kill()
+                new.wait(timeout=10)
+                _recover_failed_update()
                 store.event("reload_failed", "new worker never became healthy; kept the old one",
                             source="supervisor", level="error")
             else:  # Windows: the old one already stopped listening, so keeping it would leave nobody on the port
                 new.kill()
+                new.wait(timeout=10)
+                _recover_failed_update()
                 draining.append(worker)
                 worker = _spawn()
                 store.event("reload_failed", f"new worker never became healthy; started another ({worker.pid})",

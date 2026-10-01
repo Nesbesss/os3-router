@@ -23,7 +23,14 @@ $menu = New-Object System.Windows.Forms.ContextMenuStrip
 $statusItem = $menu.Items.Add("os3-router: …"); $statusItem.Enabled = $false
 $limitItem = $menu.Items.Add("limits: …"); $limitItem.Enabled = $false
 $menu.Items.Add("-") | Out-Null
-function OpenApp { Start-Process powershell.exe -WindowStyle Hidden -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", (Join-Path $PSScriptRoot "open-app.ps1") }
+function OpenApp {
+    $launchArgs = '-NoProfile -ExecutionPolicy Bypass -File "{0}"' -f (Join-Path $PSScriptRoot 'open-app.ps1')
+    Start-Process powershell.exe -WindowStyle Hidden -ArgumentList $launchArgs
+}
+$updateItem = $menu.Items.Add("Update progress", $null, {
+    $launchArgs = '-NoProfile -STA -ExecutionPolicy Bypass -File "{0}"' -f (Join-Path $PSScriptRoot 'update-window.ps1')
+    Start-Process powershell.exe -WindowStyle Hidden -ArgumentList $launchArgs
+})
 $openItem = $menu.Items.Add("Open OS3 Router", $null, { OpenApp }); $openItem.Font = New-Object System.Drawing.Font($openItem.Font, [System.Drawing.FontStyle]::Bold)
 $menu.Items.Add("Open web dashboard", $null, { Start-Process "http://localhost:$(Port)/" }) | Out-Null
 $menu.Items.Add("Copy OS3 settings", $null, {
@@ -64,11 +71,14 @@ $red = Dot ([System.Drawing.Color]::FromArgb(208, 59, 59))
 $script:wnShown = $false
 $script:lastAlert = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()  # only alerts from now on
 function Update {
+    $progress = $null
+    try { $progress = Get-Content (Join-Path $HomeDir 'update-progress.json') -Raw | ConvertFrom-Json } catch {}
+    $updateItem.Text = if ($progress) { "Update $($progress.tag): $($progress.state)" } else { "Update progress" }
     try {
         $s = Api "status"
         $errs = @($s.watchdog.findings | Where-Object { $_.level -eq "error" })
         $agentOk = $s.agent.status -eq "connected" -and $s.agent.running
-        $icon.Icon = if (-not $agentOk -or $errs.Count) { $red } elseif ($s.limits.s_pct -ge 90) { $amber } else { $green }
+        $icon.Icon = if ($progress.state -in @('queued', 'installing', 'switching')) { $amber } elseif ($progress.state -eq 'failed' -or -not $agentOk -or $errs.Count) { $red } elseif ($s.limits.s_pct -ge 90) { $amber } else { $green }
         $statusItem.Text = if ($agentOk) { "rabbit-agent connected · $($s.model)" } else { "rabbit-agent: $($s.agent.status)" }
         $limitItem.Text = "5h: $([math]::Round($s.limits.p_pct))%  ·  weekly: $([math]::Round($s.limits.s_pct))%"
         $sleepItem.Checked = [bool]$s.no_sleep
