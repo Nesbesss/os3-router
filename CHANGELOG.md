@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.7 (2026-10-03)
+- **A streamed answer is kept once its text has been sent.** The router no longer starts silent correction calls after beginning an answer, which could leave OS3 waiting for more output and later replace the answer with different text or tool calls. Replies that have not been streamed still receive their validation and corrections.
+- **“This doesn't mean the service is unavailable” no longer triggers an availability correction.** Actual unavailability assertions elsewhere in the same reply are still checked.
+
 ## 0.6.6 (2026-10-03)
 - **Blank model answers are corrected before being sent to OS3.** An empty final reply gets up to two correction attempts in the same conversation. Empty tool-call content remains valid. Whitespace-only answers are held back from streaming, and exhausted corrections are recorded as a model error rather than a successful empty reply.
 - **Disconnected-agent recovery uses the status transition time.** Rabbit heartbeat writes no longer reset the watchdog's disconnected timer. A handled model reply cannot suppress recovery from a later stopped or disconnected agent, and a failed restart remains retryable after the cooldown.

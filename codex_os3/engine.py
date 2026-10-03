@@ -384,6 +384,11 @@ class Turn:
             self.capture(prompt, getattr(self, "_raw", None))
 
     def corrections(self, raw, prompt, images):
+        # Sent text is committed: another model call can stall its stream and
+        # replace it with contradictory content or a different decision type.
+        if self.streamed:
+            self.ev("stream_committed", "keeping the answer already sent; no post-stream correction calls")
+            return raw
         tools, node_src = self.tools, self.node_src
         d = P.parse_decision(raw) or {}
         names = [t.get("function", t).get("name", "") for t in tools]

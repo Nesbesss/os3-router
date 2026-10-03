@@ -121,6 +121,16 @@ class Prompt(unittest.TestCase):
                    "input both work. There's no permission you need to enable.")
         self.assertFalse(P.claims_unavailable(long_ok, names))
 
+    def test_denial_of_unavailability_does_not_trigger_correction(self):
+        text = ("The check finished, but Chrome access on your Mac mini still couldn’t be confirmed, "
+                "so I couldn’t verify Google Home or Discord or whether you’re signed in. "
+                "Nothing was changed, and this doesn’t mean either service is unavailable or signed out.")
+        self.assertFalse(P.claims_unavailable(text, ["computer_use", "shell", "dummy_system"]))
+        for denial in ("This does not mean shell is unavailable.", "This doesn't show ping is not available."):
+            self.assertFalse(P.claims_unavailable(denial, ["shell", "ping"]))
+            # An actual assertion earlier in the reply still needs checking.
+            self.assertTrue(P.claims_unavailable("I don't have a shell tool. " + denial, ["shell"]))
+
 
 class Sessions(unittest.TestCase):
     def test_resume_parallel_and_compaction(self):
@@ -1140,6 +1150,33 @@ class EmptyFinalTest(unittest.TestCase):
             with self.assertRaises(engine.ClientGone):
                 self.turn().run()
             self.assertEqual(run.call_count, 2)
+
+
+class CommittedStreamTest(unittest.TestCase):
+    def test_sent_final_answer_does_not_make_silent_correction_calls(self):
+        from codex_os3 import engine
+        content = "The check could not access the browser. The permission check returned a blocker."
+        raw = json.dumps({"kind": "final", "content": content, "calls": []})
+        body = {"model": "gpt-6-luna", "messages": [{"role": "user", "content": "Check access"}], "tools": TOOLS}
+        t = engine.Turn(test_config.load(), body, lambda: True)
+        t.streamed = content[:25]
+        with mock.patch.object(engine.Turn, "extra", side_effect=AssertionError("post-stream correction")) as extra, \
+                mock.patch.object(P, "used_computer", return_value=True), \
+                mock.patch.object(P, "used_browser", return_value=True):
+            self.assertEqual(t.corrections(raw, "prompt", P.Images([], 2)), raw)
+            extra.assert_not_called()
+            msg, finish = t.to_message(raw)
+            self.assertEqual((msg["content"], finish), (content, "stop"))
+
+    def test_unsent_answer_still_gets_corrections(self):
+        from codex_os3 import engine
+        raw = json.dumps({"kind": "final", "content": "I don't have a shell tool.", "calls": []})
+        fixed = json.dumps(decision(("shell", {"command": "echo ok", "node_id": NODE_A})))
+        body = {"model": "gpt-6-luna", "messages": [{"role": "user", "content": "Check access"}], "tools": TOOLS}
+        t = engine.Turn(test_config.load(), body, lambda: True)
+        with mock.patch.object(engine.Turn, "extra", return_value=(fixed, "thread")) as extra:
+            self.assertEqual(t.corrections(raw, "prompt", P.Images([], 2)), fixed)
+            extra.assert_called_once()
 
 
 class ContentStreamTest(unittest.TestCase):
