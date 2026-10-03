@@ -1,5 +1,6 @@
 """rabbit OS3 specifics on this machine: the rabbit-agent's status, logs and restart."""
 import calendar, json, os, platform, subprocess, time
+from datetime import datetime
 
 from .platform_util import WINDOWS, pid_alive, terminate
 
@@ -26,11 +27,21 @@ def status():
 
 
 def status_age():
-    """Seconds since the agent last changed its status (the file is rewritten on every change)."""
+    """Seconds in this status. Rabbit also rewrites the file during heartbeats."""
     try:
-        return time.time() - os.path.getmtime(STATUS)
+        changed = os.path.getmtime(STATUS)
     except OSError:
         return 0
+    try:
+        with open(STATUS) as f:
+            updated = json.load(f).get("updatedAt")
+        if isinstance(updated, str):
+            stamp = datetime.fromisoformat(updated.replace("Z", "+00:00"))
+            if stamp.tzinfo is not None:
+                changed = stamp.timestamp()
+    except (OSError, ValueError, TypeError, AttributeError, OverflowError):
+        pass  # older or unreadable status files retain the mtime fallback
+    return max(0, time.time() - changed)
 
 
 def _tail(path, max_bytes):

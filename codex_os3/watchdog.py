@@ -170,7 +170,7 @@ def tick(cfg):
                          msg=f["msg"] + f" (Jev: tunnel_dead {advice['confidence']:.0%})")
     acted_for = store.kv_get("acted_for")
     for f in findings:
-        if f["action"] and resp.get("id") and acted_for == resp.get("id"):
+        if f["kind"] == "tunnel_dead" and resp.get("id") and acted_for == resp.get("id"):
             continue  # already handled this stalled reply; don't restart again for it
         if f["kind"] == "limit_high":
             fb = any((cfg.get("fallback") or {}).values())
@@ -185,7 +185,8 @@ def tick(cfg):
             else:
                 ok, msg = os3.restart_agent()
                 store.event("restart_agent", msg, source="watchdog", level="info" if ok else "error")
-                store.kv_set("acted_for", resp.get("id"))
+                if ok and f["kind"] == "tunnel_dead":
+                    store.kv_set("acted_for", resp.get("id"))
                 acted = msg
         store.event(f["kind"], f["msg"] + (f" → {acted}" if acted else ""), task=(s["last_response"] or {}).get("task"),
                     source="watchdog", level=f["level"], data={"advice": advice})

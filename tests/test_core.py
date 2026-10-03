@@ -354,6 +354,68 @@ class Watchdog(unittest.TestCase):
     def test_new_request_arrived(self):
         self.assertEqual(self.kinds(self.snap(last_request_ago_s=5)), [])
 
+    def test_disconnected_heartbeat_does_not_reset_status_age(self):
+        from datetime import datetime, timezone
+        now = time.time()
+        updated = datetime.fromtimestamp(now - 240, timezone.utc).isoformat().replace("+00:00", "Z")
+        with tempfile.TemporaryDirectory() as home:
+            path = os.path.join(home, "status.json")
+            with mock.patch.object(watchdog.os3, "STATUS", path):
+                for _ in range(2):
+                    with open(path, "w") as f:
+                        json.dump({"status": "disconnected", "updatedAt": updated}, f)
+                    self.assertLess(time.time() - os.path.getmtime(path), 2)
+                    age = watchdog.os3.status_age()
+                    self.assertAlmostEqual(age, 240, delta=2)
+                    s = self.snap(last_request_ago_s=5, agent={"running": True, "status": "disconnected"},
+                                  agent_status_age_s=age)
+                    self.assertIn(("agent_down", "restart_agent"), self.kinds(s))
+                for updated in (None, "invalid", "2026-10-03T12:00:00"):
+                    with open(path, "w") as f:
+                        json.dump({"updatedAt": updated}, f)
+                    os.utime(path, (now - 60, now - 60))
+                    self.assertAlmostEqual(watchdog.os3.status_age(), 60, delta=2)
+
+    def test_down_agent_recovers_after_an_earlier_reply_was_handled(self):
+        s = self.snap(last_response={"id": 42, "ago_s": 700, "result": "tool_call",
+                     "calls": ["ask_user"], "task": "t"}, agent={"running": False})
+        findings = watchdog.rules(s)
+        with mock.patch.object(watchdog, "snapshot", return_value=s), \
+                mock.patch.object(watchdog, "rules", return_value=findings), \
+                mock.patch.object(watchdog.store, "kv_get", return_value=42), \
+                mock.patch.object(watchdog.store, "kv_set"), \
+                mock.patch.object(watchdog.store, "event"), \
+                mock.patch.object(watchdog, "_recent", return_value=False), \
+                mock.patch.object(watchdog.os3, "restart_agent", return_value=(True, "reconnected")) as restart:
+            watchdog.tick({"restart_agent": True})
+            restart.assert_called_once()
+
+    def test_failed_restart_can_retry_after_cooldown(self):
+        s = self.snap(last_response={"id": 42, "ago_s": 150, "result": "tool_call",
+                     "calls": ["shell"], "task": "t"})
+        with mock.patch.object(watchdog, "snapshot", return_value=s), \
+                mock.patch.object(watchdog, "_recent", return_value=False), \
+                mock.patch.object(watchdog.store, "event"), \
+                mock.patch.object(watchdog.os3, "restart_agent", return_value=(False, "scheduler unavailable")) as restart:
+            store.kv_set("acted_for", None)
+            watchdog.tick({"restart_agent": True})
+            self.assertIsNone(store.kv_get("acted_for"))
+            watchdog.tick({"restart_agent": True})
+            self.assertEqual(restart.call_count, 2)
+
+    def test_successful_tunnel_recovery_still_deduplicates_reply(self):
+        s = self.snap(last_response={"id": 42, "ago_s": 150, "result": "tool_call",
+                     "calls": ["shell"], "task": "t"})
+        with mock.patch.object(watchdog, "snapshot", return_value=s), \
+                mock.patch.object(watchdog, "_recent", return_value=False), \
+                mock.patch.object(watchdog.store, "event"), \
+                mock.patch.object(watchdog.os3, "restart_agent", return_value=(True, "reconnected")) as restart:
+            store.kv_set("acted_for", None)
+            watchdog.tick({"restart_agent": True})
+            self.assertEqual(store.kv_get("acted_for"), 42)
+            watchdog.tick({"restart_agent": True})
+            restart.assert_called_once()
+
     def test_single_watchdog_lease(self):
         import os
         store.kv_set("watchdog_owner", {})
