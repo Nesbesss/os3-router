@@ -8,12 +8,17 @@ FALSE_UNAVAILABLE = re.compile(
     r"(there is |there[\u2019']s )?no `?[\w.-]+`? (tool|function) (available|here|in this)",
     re.I)
 _NEG = re.compile(r"\b(can[\u2019']?t|cannot|unable|don[\u2019']?t|doesn[\u2019']?t|not|no|isn[\u2019']?t|aren[\u2019']?t|without)\b", re.I)
+_UNAVAILABLE_DENIAL = re.compile(
+    r"\b(?:doesn[\u2019']t|does not|don[\u2019']t|do not|didn[\u2019']t|did not) "
+    r"(?:mean|show|prove|establish|imply)\b[^.!?;\n]{0,160}?\b"
+    r"(?:unavailable|(?:not|no longer) (?:available|accessible|enabled|connected))\b", re.I)
 
 
 def claims_unavailable(content, tool_names):
     """A final answer that says a tool/device is unavailable: known phrasings, or naming one of
     the tools that ARE available next to a negation ("the tools don't include `ping`")."""
-    if FALSE_UNAVAILABLE.search(content or ""):
+    content = _UNAVAILABLE_DENIAL.sub("", content or "")
+    if FALSE_UNAVAILABLE.search(content):
         return True
     if not content or not _NEG.search(content):
         return False
