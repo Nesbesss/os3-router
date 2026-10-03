@@ -354,6 +354,69 @@ class Watchdog(unittest.TestCase):
     def test_new_request_arrived(self):
         self.assertEqual(self.kinds(self.snap(last_request_ago_s=5)), [])
 
+    def test_disconnected_heartbeat_does_not_reset_status_age(self):
+        from datetime import datetime, timezone
+        now = time.time()
+        updated = datetime.fromtimestamp(now - 240, timezone.utc).isoformat().replace("+00:00", "Z")
+        with tempfile.TemporaryDirectory() as home:
+            path = os.path.join(home, "status.json")
+            with mock.patch.object(watchdog.os3, "STATUS", path):
+                for _ in range(2):
+                    with open(path, "w") as f:
+                        json.dump({"status": "disconnected", "updatedAt": updated}, f)
+                    self.assertLess(time.time() - os.path.getmtime(path), 2)
+                    age = watchdog.os3.status_age()
+                    self.assertAlmostEqual(age, 240, delta=2)
+                    s = self.snap(last_request_ago_s=5, agent={"running": True, "status": "disconnected"},
+                                  agent_status_age_s=age)
+                    self.assertIn(("agent_down", "restart_agent"), self.kinds(s))
+                for updated in (None, "invalid", "2026-10-03T12:00:00"):
+                    with open(path, "w") as f:
+                        json.dump({"updatedAt": updated}, f)
+                    os.utime(path, (now - 60, now - 60))
+                    self.assertAlmostEqual(watchdog.os3.status_age(), 60, delta=2)
+
+    def test_down_agent_recovers_after_an_earlier_reply_was_handled(self):
+        s = self.snap(last_response={"id": 42, "ago_s": 700, "result": "tool_call",
+                     "calls": ["ask_user"], "task": "t"}, agent={"running": False})
+        with mock.patch.object(watchdog.os3, "installed", return_value=True):
+            findings = watchdog.rules(s)
+        with mock.patch.object(watchdog, "snapshot", return_value=s), \
+                mock.patch.object(watchdog, "rules", return_value=findings), \
+                mock.patch.object(watchdog.store, "kv_get", return_value=42), \
+                mock.patch.object(watchdog.store, "kv_set"), \
+                mock.patch.object(watchdog.store, "event"), \
+                mock.patch.object(watchdog, "_recent", return_value=False), \
+                mock.patch.object(watchdog.os3, "restart_agent", return_value=(True, "reconnected")) as restart:
+            watchdog.tick({"restart_agent": True})
+            restart.assert_called_once()
+
+    def test_failed_restart_can_retry_after_cooldown(self):
+        s = self.snap(last_response={"id": 42, "ago_s": 150, "result": "tool_call",
+                     "calls": ["shell"], "task": "t"})
+        with mock.patch.object(watchdog, "snapshot", return_value=s), \
+                mock.patch.object(watchdog, "_recent", return_value=False), \
+                mock.patch.object(watchdog.store, "event"), \
+                mock.patch.object(watchdog.os3, "restart_agent", return_value=(False, "scheduler unavailable")) as restart:
+            store.kv_set("acted_for", None)
+            watchdog.tick({"restart_agent": True})
+            self.assertIsNone(store.kv_get("acted_for"))
+            watchdog.tick({"restart_agent": True})
+            self.assertEqual(restart.call_count, 2)
+
+    def test_successful_tunnel_recovery_still_deduplicates_reply(self):
+        s = self.snap(last_response={"id": 42, "ago_s": 150, "result": "tool_call",
+                     "calls": ["shell"], "task": "t"})
+        with mock.patch.object(watchdog, "snapshot", return_value=s), \
+                mock.patch.object(watchdog, "_recent", return_value=False), \
+                mock.patch.object(watchdog.store, "event"), \
+                mock.patch.object(watchdog.os3, "restart_agent", return_value=(True, "reconnected")) as restart:
+            store.kv_set("acted_for", None)
+            watchdog.tick({"restart_agent": True})
+            self.assertEqual(store.kv_get("acted_for"), 42)
+            watchdog.tick({"restart_agent": True})
+            restart.assert_called_once()
+
     def test_single_watchdog_lease(self):
         import os
         store.kv_set("watchdog_owner", {})
@@ -1007,6 +1070,78 @@ class MacAppUpdateTest(unittest.TestCase):
             os.environ["HOME"] = old_home
 
 
+class EmptyFinalTest(unittest.TestCase):
+    tools = [{"type": "function", "function": {"name": "ping", "parameters": {"type": "object", "properties": {}}}}]
+
+    def turn(self):
+        from codex_os3 import engine
+        body = {"model": "gpt-6-luna", "messages": [{"role": "user", "content": "Continue the check"}], "tools": self.tools}
+        return engine.Turn(dict(test_config.load(), capture=False), body, lambda: True)
+
+    def test_blank_final_retries_in_same_thread_before_succeeding(self):
+        from codex_os3 import engine
+        for blank in ("", " \n\t" * 100):
+            with self.subTest(blank_length=len(blank)), \
+                    mock.patch.object(engine.sessions, "plan", return_value=(True, "original-thread", [{"role": "user", "content": "Continue"}])), \
+                    mock.patch.object(engine.accounts, "pick", return_value="main"), \
+                    mock.patch.object(engine.Turn, "plan_model", return_value=None), \
+                    mock.patch.object(engine.Turn, "codex", side_effect=[
+                        (json.dumps({"kind": "final", "content": blank, "calls": []}), "original-thread"),
+                        (json.dumps({"kind": "final", "content": "The check is still pending.", "calls": []}), "original-thread")]) as run:
+                t = self.turn()
+                msg, finish = t.run()
+                self.assertEqual((msg["content"], finish), ("The check is still pending.", "stop"))
+                self.assertEqual(run.call_count, 2)
+                self.assertEqual(run.call_args.kwargs["resume"], "original-thread")
+                self.assertIn("cannot accept an empty reply", run.call_args.args[0])
+                self.assertEqual(store.q("SELECT status FROM requests WHERE id=?", (t.rid,))[0]["status"], "ok")
+
+    def test_persistently_blank_final_is_error_not_success(self):
+        from codex_os3 import engine
+        raw = json.dumps({"kind": "final", "content": "", "calls": []})
+        with mock.patch.object(engine.sessions, "plan", return_value=(False, None, None)), \
+                mock.patch.object(engine.accounts, "pick", return_value="main"), \
+                mock.patch.object(engine.Turn, "plan_model", return_value=None), \
+                mock.patch.object(engine.Turn, "codex", return_value=(raw, "thread")) as run:
+            t = self.turn()
+            with self.assertRaisesRegex(engine.EngineError, "empty final answer"):
+                t.run()
+            self.assertEqual(run.call_count, 3)  # original + two bounded corrections
+            self.assertEqual(store.q("SELECT status FROM requests WHERE id=?", (t.rid,))[0]["status"], "error")
+
+    def test_empty_tool_content_remains_valid_and_is_not_retried(self):
+        from codex_os3 import engine
+        raw = json.dumps(decision(("ping", {})))
+        with mock.patch.object(engine.sessions, "plan", return_value=(False, None, None)), \
+                mock.patch.object(engine.accounts, "pick", return_value="main"), \
+                mock.patch.object(engine.Turn, "plan_model", return_value=None), \
+                mock.patch.object(engine.Turn, "codex", return_value=(raw, "thread")) as run:
+            msg, finish = self.turn().run()
+            self.assertEqual(finish, "tool_calls")
+            self.assertEqual(msg["tool_calls"][0]["function"]["name"], "ping")
+            run.assert_called_once()
+
+    def test_blank_correction_cannot_replace_valid_verified_answer(self):
+        from codex_os3 import engine
+        t = self.turn()
+        raw = json.dumps({"kind": "final", "content": "Saved and checked.", "calls": []})
+        blank = json.dumps({"kind": "final", "content": "", "calls": []})
+        with mock.patch.object(P, "used_computer", return_value=True), \
+                mock.patch.object(engine.Turn, "extra", return_value=(blank, "thread")):
+            self.assertEqual(t.corrections(raw, "prompt", P.Images([], 2)), raw)
+
+    def test_cancelled_client_stops_blank_response_retry(self):
+        from codex_os3 import engine
+        raw = json.dumps({"kind": "final", "content": "", "calls": []})
+        with mock.patch.object(engine.sessions, "plan", return_value=(False, None, None)), \
+                mock.patch.object(engine.accounts, "pick", return_value="main"), \
+                mock.patch.object(engine.Turn, "plan_model", return_value=None), \
+                mock.patch.object(engine.Turn, "codex", side_effect=[(raw, "thread"), engine.ClientGone()]) as run:
+            with self.assertRaises(engine.ClientGone):
+                self.turn().run()
+            self.assertEqual(run.call_count, 2)
+
+
 class ContentStreamTest(unittest.TestCase):
     def feed(self, raw, ok=lambda t: True, step=3):
         out = []
@@ -1222,6 +1357,22 @@ class AccountsTest(unittest.TestCase):
 
                 with mock.patch.object(appserver, "run", side_effect=run):
                     t.codex("p", stream=True)
+
+    def test_blank_final_content_is_not_streamed_before_correction(self):
+        from codex_os3 import appserver, engine
+        body = {"model": "gpt-6-sol", "messages": [{"role": "user", "content": "q"}], "tools": TOOLS}
+        sent = []
+        t = engine.Turn(dict(self.cfg.load(), engine="appserver", stream_chat=True), body, lambda: True)
+        t.role, t.account, t.stream_sink = "worker", "2", sent.append
+        raw = json.dumps({"kind": "final", "content": " \n\t" * 100, "calls": []})
+
+        def run(*args, **kwargs):
+            kwargs["on_text"](raw)
+            return raw, {}, "T", None
+
+        with mock.patch.object(appserver, "run", side_effect=run):
+            t.codex("p", stream=True)
+        self.assertEqual(sent, [])
 
     def test_owner_finds_thread_in_its_account(self):
         open(os.path.join(self.a.root(), "2", "sessions", "2026", "rollout-x-T42.jsonl"), "w").close()

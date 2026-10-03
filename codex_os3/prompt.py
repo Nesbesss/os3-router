@@ -309,6 +309,7 @@ def flatten(messages, tools, images=None, header=True, all_messages=None, own_im
             "screenshots/images referenced as [image #N] in the conversation; the highest number "
             "is the newest. If a tool result above already answers the user, or no tool is "
             "needed, reply with kind=\"final\", content=<your answer>, calls=[]. "
+            "Final answer content must not be blank: the application rejects empty replies. "
             "Repeating an earlier call is fine when the conversation asks for it. arguments_json must be strictly valid JSON: escape every backslash in string values as \\\\ (e.g. a shell \\( becomes \\\\( ) and newlines as \\n."
         )
     return "\n\n".join(out).strip()
@@ -435,3 +436,7 @@ VALIDATE_NUDGE = (
     "\n\nYour previous reply's tool calls were NOT executed, because the app would reject "
     "them:\n{problems}\nReply again with the same intent and corrected calls.")
 
+EMPTY_NUDGE = (
+    "\n\nYour previous final answer was blank. The application cannot accept an empty reply. "
+    "Return a concise, non-empty final answer based on the conversation, or valid tool calls "
+    "if work remains. Do not claim that unperformed work succeeded.")

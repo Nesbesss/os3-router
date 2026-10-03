@@ -168,6 +168,10 @@ def call_problems(name, args, tool):
 
 
 def decision_problems(d, tools, node_src, own_images=False):
+    if d.get("kind") == "final":
+        content = d.get("content")
+        if not isinstance(content, str) or not content.strip():
+            return ["final answer content is blank; provide a non-empty answer or valid tool calls"]
     if d.get("kind") != "tool_call":
         return []
     calls = [c for c in (d.get("calls") or ([d] if d.get("tool") else [])) if isinstance(c, dict)]
@@ -214,5 +218,4 @@ def add_missing_feed(out_calls, tools):
     return out_calls + [{"id": f"call_{uuid.uuid4().hex[:24]}", "type": "function",
                          "function": {"name": "feed_image",
                                       "arguments": json.dumps({"reference": path, "node_id": node})}}]
-
 
