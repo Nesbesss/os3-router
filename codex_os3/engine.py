@@ -182,7 +182,8 @@ class Turn:
             if stream and self.stream_sink and not self.streamed and self.role in ("chat", "worker") and not self.forced \
                     and self.cfg.get("stream_chat") and not P.used_computer(self.msgs):  # (no later "verify" rewrite)
                 names = [t.get("function", t).get("name", "") for t in self.tools]
-                cs = P.ContentStream(self._stream, lambda t: not P.claims_unavailable(t, names) and not P.claims_not_found(t))
+                cs = P.ContentStream(self._stream, lambda t: bool(t.strip())
+                                     and not P.claims_unavailable(t, names) and not P.claims_not_found(t))
                 extra["on_text"] = cs.feed  # add to the options: replacing them lost the account
         text, usage, thread, limits = runner.run(
             self.cfg, prompt, self.model, self.schema, self.alive, images, resume, keep, role=self.role, **extra)
@@ -405,8 +406,9 @@ class Turn:
         for attempt in range(2):  # a broken call that reaches OS3 fails the step, so try twice
             if not problems:
                 break
-            note = P.VALIDATE_NUDGE.format(problems="\n".join("- " + p for p in problems[:8]))
-            self.ev("invalid_calls", "; ".join(problems)[:300], "warn", {"problems": problems})
+            blank = (P.parse_decision(raw) or {}).get("kind") == "final"
+            note = P.EMPTY_NUDGE if blank else P.VALIDATE_NUDGE.format(problems="\n".join("- " + p for p in problems[:8]))
+            self.ev("empty_response" if blank else "invalid_calls", "; ".join(problems)[:300], "warn", {"problems": problems})
             r, t = self.extra("fix", note.strip(), prompt + "\n\nYour reply was: " + raw[:4000] + note, images.files)
             if not r:
                 break
@@ -447,7 +449,10 @@ class Turn:
         calls = [c for c in calls if isinstance(c, dict) and c.get("tool")]
         if d.get("kind") != "tool_call" or not calls:
             self._result = ("final", [])
-            return {"role": "assistant", "content": d.get("content", raw)}, "stop"
+            content = d.get("content", raw)
+            if not isinstance(content, str) or not content.strip():
+                raise EngineError("model returned an empty final answer after correction retries")
+            return {"role": "assistant", "content": content}, "stop"
         by_name = {t.get("function", t).get("name"): t.get("function", t) for t in self.tools}
         out = []
         for c in calls:

@@ -1070,6 +1070,78 @@ class MacAppUpdateTest(unittest.TestCase):
             os.environ["HOME"] = old_home
 
 
+class EmptyFinalTest(unittest.TestCase):
+    tools = [{"type": "function", "function": {"name": "ping", "parameters": {"type": "object", "properties": {}}}}]
+
+    def turn(self):
+        from codex_os3 import engine
+        body = {"model": "gpt-6-luna", "messages": [{"role": "user", "content": "Continue the check"}], "tools": self.tools}
+        return engine.Turn(dict(test_config.load(), capture=False), body, lambda: True)
+
+    def test_blank_final_retries_in_same_thread_before_succeeding(self):
+        from codex_os3 import engine
+        for blank in ("", " \n\t" * 100):
+            with self.subTest(blank_length=len(blank)), \
+                    mock.patch.object(engine.sessions, "plan", return_value=(True, "original-thread", [{"role": "user", "content": "Continue"}])), \
+                    mock.patch.object(engine.accounts, "pick", return_value="main"), \
+                    mock.patch.object(engine.Turn, "plan_model", return_value=None), \
+                    mock.patch.object(engine.Turn, "codex", side_effect=[
+                        (json.dumps({"kind": "final", "content": blank, "calls": []}), "original-thread"),
+                        (json.dumps({"kind": "final", "content": "The check is still pending.", "calls": []}), "original-thread")]) as run:
+                t = self.turn()
+                msg, finish = t.run()
+                self.assertEqual((msg["content"], finish), ("The check is still pending.", "stop"))
+                self.assertEqual(run.call_count, 2)
+                self.assertEqual(run.call_args.kwargs["resume"], "original-thread")
+                self.assertIn("cannot accept an empty reply", run.call_args.args[0])
+                self.assertEqual(store.q("SELECT status FROM requests WHERE id=?", (t.rid,))[0]["status"], "ok")
+
+    def test_persistently_blank_final_is_error_not_success(self):
+        from codex_os3 import engine
+        raw = json.dumps({"kind": "final", "content": "", "calls": []})
+        with mock.patch.object(engine.sessions, "plan", return_value=(False, None, None)), \
+                mock.patch.object(engine.accounts, "pick", return_value="main"), \
+                mock.patch.object(engine.Turn, "plan_model", return_value=None), \
+                mock.patch.object(engine.Turn, "codex", return_value=(raw, "thread")) as run:
+            t = self.turn()
+            with self.assertRaisesRegex(engine.EngineError, "empty final answer"):
+                t.run()
+            self.assertEqual(run.call_count, 3)  # original + two bounded corrections
+            self.assertEqual(store.q("SELECT status FROM requests WHERE id=?", (t.rid,))[0]["status"], "error")
+
+    def test_empty_tool_content_remains_valid_and_is_not_retried(self):
+        from codex_os3 import engine
+        raw = json.dumps(decision(("ping", {})))
+        with mock.patch.object(engine.sessions, "plan", return_value=(False, None, None)), \
+                mock.patch.object(engine.accounts, "pick", return_value="main"), \
+                mock.patch.object(engine.Turn, "plan_model", return_value=None), \
+                mock.patch.object(engine.Turn, "codex", return_value=(raw, "thread")) as run:
+            msg, finish = self.turn().run()
+            self.assertEqual(finish, "tool_calls")
+            self.assertEqual(msg["tool_calls"][0]["function"]["name"], "ping")
+            run.assert_called_once()
+
+    def test_blank_correction_cannot_replace_valid_verified_answer(self):
+        from codex_os3 import engine
+        t = self.turn()
+        raw = json.dumps({"kind": "final", "content": "Saved and checked.", "calls": []})
+        blank = json.dumps({"kind": "final", "content": "", "calls": []})
+        with mock.patch.object(P, "used_computer", return_value=True), \
+                mock.patch.object(engine.Turn, "extra", return_value=(blank, "thread")):
+            self.assertEqual(t.corrections(raw, "prompt", P.Images([], 2)), raw)
+
+    def test_cancelled_client_stops_blank_response_retry(self):
+        from codex_os3 import engine
+        raw = json.dumps({"kind": "final", "content": "", "calls": []})
+        with mock.patch.object(engine.sessions, "plan", return_value=(False, None, None)), \
+                mock.patch.object(engine.accounts, "pick", return_value="main"), \
+                mock.patch.object(engine.Turn, "plan_model", return_value=None), \
+                mock.patch.object(engine.Turn, "codex", side_effect=[(raw, "thread"), engine.ClientGone()]) as run:
+            with self.assertRaises(engine.ClientGone):
+                self.turn().run()
+            self.assertEqual(run.call_count, 2)
+
+
 class ContentStreamTest(unittest.TestCase):
     def feed(self, raw, ok=lambda t: True, step=3):
         out = []
@@ -1285,6 +1357,22 @@ class AccountsTest(unittest.TestCase):
 
                 with mock.patch.object(appserver, "run", side_effect=run):
                     t.codex("p", stream=True)
+
+    def test_blank_final_content_is_not_streamed_before_correction(self):
+        from codex_os3 import appserver, engine
+        body = {"model": "gpt-6-sol", "messages": [{"role": "user", "content": "q"}], "tools": TOOLS}
+        sent = []
+        t = engine.Turn(dict(self.cfg.load(), engine="appserver", stream_chat=True), body, lambda: True)
+        t.role, t.account, t.stream_sink = "worker", "2", sent.append
+        raw = json.dumps({"kind": "final", "content": " \n\t" * 100, "calls": []})
+
+        def run(*args, **kwargs):
+            kwargs["on_text"](raw)
+            return raw, {}, "T", None
+
+        with mock.patch.object(appserver, "run", side_effect=run):
+            t.codex("p", stream=True)
+        self.assertEqual(sent, [])
 
     def test_owner_finds_thread_in_its_account(self):
         open(os.path.join(self.a.root(), "2", "sessions", "2026", "rollout-x-T42.jsonl"), "w").close()

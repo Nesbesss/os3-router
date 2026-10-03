@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.6 (2026-10-03)
+- **Blank model answers are corrected before being sent to OS3.** An empty final reply gets up to two correction attempts in the same conversation. Empty tool-call content remains valid. Whitespace-only answers are held back from streaming, and exhausted corrections are recorded as a model error rather than a successful empty reply.
+- **Disconnected-agent recovery uses the status transition time.** Rabbit heartbeat writes no longer reset the watchdog's disconnected timer. A handled model reply cannot suppress recovery from a later stopped or disconnected agent, and a failed restart remains retryable after the cooldown.
+- These fixes do not repair Rabbit-agent's separately reproduced tunnel frame-buffering and socket-cleanup defects. A connected control channel and local router health check still do not establish that the cloud model route works.
+
 ## 0.6.5 (2026-10-01)
 - **Windows updates have their own taskbar window.** Downloading, testing, installing and restarting stay visible while the router reloads. The taskbar shows activity during installation and an error state if the update fails. The window keeps the final result until you close it; closing it does not cancel the update. Reopen it from the tray's Update progress item.
 - **An update is complete only after the updated router answers its health check.** Failed file replacement restores the previous files. Failed startup attempts restore the previous version before Windows starts a fallback worker. Failures remain visible in Settings and the update window, with a retry option.
