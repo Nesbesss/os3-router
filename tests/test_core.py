@@ -379,7 +379,8 @@ class Watchdog(unittest.TestCase):
     def test_down_agent_recovers_after_an_earlier_reply_was_handled(self):
         s = self.snap(last_response={"id": 42, "ago_s": 700, "result": "tool_call",
                      "calls": ["ask_user"], "task": "t"}, agent={"running": False})
-        findings = watchdog.rules(s)
+        with mock.patch.object(watchdog.os3, "installed", return_value=True):
+            findings = watchdog.rules(s)
         with mock.patch.object(watchdog, "snapshot", return_value=s), \
                 mock.patch.object(watchdog, "rules", return_value=findings), \
                 mock.patch.object(watchdog.store, "kv_get", return_value=42), \
