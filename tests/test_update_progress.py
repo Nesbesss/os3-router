@@ -186,6 +186,13 @@ class UpdateProgressTest(unittest.TestCase):
         self.assertTrue(note['show'])
         self.assertEqual(note['sections'][0]['version'], '0.6.8')
         self.assertIn('complete test log', note['sections'][0]['body'])
+        self.assertNotIn('A streamed answer is kept', note['sections'][0]['body'])
+        with mock.patch.object(ui_api, '__version__', '0.6.7'), \
+                mock.patch.object(ui_api, '_prev_version', return_value='0.6.6'):
+            previous = ui_api.whatsnew()
+        self.assertEqual(previous['sections'][0]['version'], '0.6.7')
+        self.assertIn('A streamed answer is kept', previous['sections'][0]['body'])
+        self.assertNotIn('complete test log', previous['sections'][0]['body'])
 
     def test_health_from_old_pid_cannot_confirm_completion(self):
         update_progress.set_state('switching', 'v0.9.0', 'restart', 'Restarting')
