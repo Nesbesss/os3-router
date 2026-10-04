@@ -162,7 +162,7 @@ class UpdateProgressTest(unittest.TestCase):
 
     def test_real_validation_subprocess_keeps_log_and_isolated_homes(self):
         buf = io.BytesIO()
-        script = b'import os, unittest\nclass Isolated(unittest.TestCase):\n def test_home(self):\n  assert os.environ["HOME"] == os.environ["USERPROFILE"]\n  assert os.environ["CODEX_OS3_HOME"].endswith("test-home/router") or os.environ["CODEX_OS3_HOME"].endswith("test-home\\router")\n'
+        script = b"import os, unittest\nclass Isolated(unittest.TestCase):\n def test_home(self):\n  assert os.environ.get('HOME') == os.environ.get('USERPROFILE')\n  home = os.environ.get('CODEX_OS3_HOME')\n  assert os.path.basename(home) == 'router'\n  assert os.path.basename(os.path.dirname(home)) == 'test-home'\n"
         with tarfile.open(fileobj=buf, mode='w:gz') as archive:
             for name, data in [('release/codex_os3/__init__.py', b'__version__ = "0.9.0"'),
                                ('release/tests/test_isolated.py', script)]:
