@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.8 (Unreleased)
+- **Update checks work independently of installed Claude tools.** The Windows console regression test no longer counts a macOS login-shell discovery probe as an extra authentication check. Console suppression remains checked against the exact Claude authentication command.
+- **Failed updates keep their complete test log.** The latest validation attempt records the release, platform, Python version, every test name, output and exit result in `update-tests.log` in the router data folder. Timeout output is retained too, instead of deleting the only diagnostic evidence.
+- **Updates continue after optional watchdog recovery errors.** A failed recovery check no longer skips queued or automatic update processing.
+- **A worker cannot interrupt another live updater.** Long-running update tests can outlast the watchdog lease; a replacement worker now waits while the original updater is alive. Failed rollback blocks further automatic installs and preserves the previous-version backup. An explicit retry must restore those files before queueing another update.
+- These fixes cover reproduced validation and recovery defects. They do not establish the cause of an older truncated socket traceback or guarantee Windows update success on every device. Older running updater/supervisor code gains these protections only after it is replaced.
+
 ## 0.6.7 (2026-10-03)
 - **A streamed answer is kept once its text has been sent.** The router no longer starts silent correction calls after beginning an answer, which could leave OS3 waiting for more output and later replace the answer with different text or tool calls. Replies that have not been streamed still receive their validation and corrections.
 - **“This doesn't mean the service is unavailable” no longer triggers an availability correction.** Actual unavailability assertions elsewhere in the same reply are still checked.

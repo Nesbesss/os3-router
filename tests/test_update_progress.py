@@ -20,6 +20,7 @@ class UpdateProgressTest(unittest.TestCase):
         for patch in (
             mock.patch.object(config, 'HOME', self.temp.name),
             mock.patch.object(updater, 'update_apps'),
+            mock.patch.object(updater.platform_util, 'pid_alive', return_value=False),
             mock.patch.object(store, 'kv_get', side_effect=lambda k, default=None: self.values.get(k, default)),
             mock.patch.object(store, 'kv_set', side_effect=lambda k, v: self.values.__setitem__(k, v)),
             mock.patch.object(store, 'event'),
@@ -100,14 +101,98 @@ class UpdateProgressTest(unittest.TestCase):
         self.assertFalse((Path(self.temp.name) / 'reload.request').exists())
 
     def test_test_failure_preserves_previous_install(self):
+        output = 'FAIL: test_claude_check_has_no_console_window\n' + 'socket recv_into frame\n' * 40
+        def run(*args, **kwargs):
+            kwargs['stdout'].write(output)
+            return mock.Mock(returncode=1)
         with mock.patch.object(updater, '_get', return_value=self.archive()), \
                 mock.patch.object(update_progress, 'open_window'), \
-                mock.patch.object(updater.subprocess, 'run', return_value=mock.Mock(returncode=1, stderr='bad tests')):
-            with self.assertRaisesRegex(RuntimeError, 'bad tests'):
+                mock.patch.object(updater.subprocess, 'run', side_effect=run):
+            with self.assertRaisesRegex(RuntimeError, 'test_claude_check_has_no_console_window'):
                 updater.install('v0.9.0', app=self.app)
+        log = (Path(self.temp.name) / 'update-tests.log').read_text()
+        self.assertIn(output, log)
+        self.assertIn('Test process exit code: 1', log)
         self.assertEqual(update_progress.get()['state'], 'failed')
         self.assertFalse(Path(self.app + '.prev').exists())
         self.assertIn('0.8.0', (Path(self.app) / 'codex_os3' / '__init__.py').read_text())
+
+    def test_validation_timeout_keeps_partial_log_and_previous_install(self):
+        def run(*args, **kwargs):
+            kwargs['stdout'].write('test_hanging ... partial traceback\n')
+            raise updater.subprocess.TimeoutExpired(args[0], 900)
+        with mock.patch.object(updater, '_get', return_value=self.archive()), \
+                mock.patch.object(update_progress, 'open_window'), \
+                mock.patch.object(updater.subprocess, 'run', side_effect=run):
+            with self.assertRaisesRegex(RuntimeError, 'tests timed out; full log:'):
+                updater.install('v0.9.0', app=self.app)
+        log = (Path(self.temp.name) / 'update-tests.log').read_text()
+        self.assertIn('partial traceback', log)
+        self.assertIn('timed out after 900 seconds', log)
+        self.assertFalse((Path(self.temp.name) / 'reload.request').exists())
+        self.assertIn('0.8.0', (Path(self.app) / 'codex_os3' / '__init__.py').read_text())
+
+    def test_live_updater_is_not_interrupted_after_lease_expires(self):
+        update_progress.set_state('installing', 'v0.9.0', 'copy', 'Installing')
+        self.values['update_progress']['pid'] = os.getpid() + 1
+        with mock.patch.object(updater, 'managed', return_value=True), \
+                mock.patch.object(updater.platform_util, 'pid_alive', return_value=True), \
+                mock.patch.object(updater, 'restore_previous') as restore, \
+                mock.patch.object(updater, 'install') as install:
+            updater.maybe({'auto_update': True})
+        restore.assert_not_called()
+        install.assert_not_called()
+        self.assertEqual(update_progress.get()['state'], 'installing')
+
+    def test_failed_interruption_rollback_cannot_start_another_install(self):
+        update_progress.set_state('installing', 'v0.9.0', 'copy', 'Installing')
+        self.values['update_progress']['pid'] = os.getpid() + 1
+        self.values['manual_update'] = {'state': 'installing', 'tag': 'v0.9.0'}
+        with mock.patch.object(updater, 'managed', return_value=True), \
+                mock.patch.object(updater.platform_util, 'pid_alive', return_value=False), \
+                mock.patch.object(updater, 'restore_previous', side_effect=OSError('locked')), \
+                mock.patch.object(updater, 'latest') as latest, \
+                mock.patch.object(updater, 'install') as install:
+            updater.maybe({'auto_update': True})
+            updater.maybe({'auto_update': True})  # Later ticks must preserve the backup too.
+        latest.assert_not_called()
+        install.assert_not_called()
+        self.assertEqual(update_progress.get()['state'], 'failed')
+        self.assertIn('Could not restore', update_progress.get()['error'])
+
+    def test_real_validation_subprocess_keeps_log_and_isolated_homes(self):
+        buf = io.BytesIO()
+        script = b"import os, unittest\nclass Isolated(unittest.TestCase):\n def test_home(self):\n  assert os.environ.get('HOME') == os.environ.get('USERPROFILE')\n  home = os.environ.get('CODEX_OS3_HOME')\n  assert os.path.basename(home) == 'router'\n  assert os.path.basename(os.path.dirname(home)) == 'test-home'\n"
+        with tarfile.open(fileobj=buf, mode='w:gz') as archive:
+            for name, data in [('release/codex_os3/__init__.py', b'__version__ = "0.9.0"'),
+                               ('release/tests/test_isolated.py', script)]:
+                info = tarfile.TarInfo(name)
+                info.size = len(data)
+                archive.addfile(info, io.BytesIO(data))
+        with mock.patch.object(updater, '_get', return_value=buf.getvalue()), \
+                mock.patch.object(update_progress, 'open_window'):
+            updater.install('v0.9.0', app=self.app)
+        log = (Path(self.temp.name) / 'update-tests.log').read_text()
+        self.assertIn('test_home', log)
+        self.assertIn('Test process exit code: 0', log)
+        self.assertEqual(update_progress.get()['state'], 'switching')
+        self.assertTrue(Path(self.app + '.prev').exists())
+
+    def test_unreleased_update_notes_reach_whats_new(self):
+        from codex_os3 import ui_api
+        with mock.patch.object(ui_api, '__version__', '0.6.8'), \
+                mock.patch.object(ui_api, '_prev_version', return_value='0.6.7'):
+            note = ui_api.whatsnew()
+        self.assertTrue(note['show'])
+        self.assertEqual(note['sections'][0]['version'], '0.6.8')
+        self.assertIn('complete test log', note['sections'][0]['body'])
+        self.assertNotIn('A streamed answer is kept', note['sections'][0]['body'])
+        with mock.patch.object(ui_api, '__version__', '0.6.7'), \
+                mock.patch.object(ui_api, '_prev_version', return_value='0.6.6'):
+            previous = ui_api.whatsnew()
+        self.assertEqual(previous['sections'][0]['version'], '0.6.7')
+        self.assertIn('A streamed answer is kept', previous['sections'][0]['body'])
+        self.assertNotIn('complete test log', previous['sections'][0]['body'])
 
     def test_health_from_old_pid_cannot_confirm_completion(self):
         update_progress.set_state('switching', 'v0.9.0', 'restart', 'Restarting')
@@ -173,7 +258,9 @@ class UpdateProgressTest(unittest.TestCase):
         update_progress.set_state('switching', 'v0.9.0', 'restart', 'Restarting')
         response = mock.MagicMock()
         response.__enter__.return_value.read.return_value = b'{"status":"ok","pid":20,"version":"0.8.0"}'
-        with mock.patch.object(supervisor.urllib.request, 'urlopen', return_value=response),                 mock.patch.object(supervisor.time, 'time', side_effect=[0, 0, 50]),                 mock.patch.object(supervisor.time, 'sleep'):
+        with mock.patch.object(supervisor.urllib.request, 'urlopen', return_value=response), \
+                mock.patch.object(supervisor.time, 'time', side_effect=[0, 0, 50]), \
+                mock.patch.object(supervisor.time, 'sleep'):
             self.assertFalse(supervisor._healthy({'bind': '127.0.0.1', 'port': 1}, 20))
         self.assertEqual(update_progress.get()['state'], 'switching')
 
@@ -197,7 +284,9 @@ class UpdateProgressTest(unittest.TestCase):
         self.assertEqual(self.values['apps_version'], updater.__version__)
 
     def test_windows_companion_checks_shortcut_and_tray_errors_without_console(self):
-        with mock.patch.object(updater.sys, 'platform', 'win32'),                 mock.patch.object(updater.platform_util, 'no_window_kwargs', return_value={'creationflags': 123}),                 mock.patch.object(updater.subprocess, 'run', return_value=mock.Mock(returncode=0)) as run:
+        with mock.patch.object(updater.sys, 'platform', 'win32'), \
+                mock.patch.object(updater.platform_util, 'no_window_kwargs', return_value={'creationflags': 123}), \
+                mock.patch.object(updater.subprocess, 'run', return_value=mock.Mock(returncode=0)) as run:
             self.real_update_apps('v0.9.0')
         self.assertEqual(len(run.call_args_list), 4)
         for call in run.call_args_list:
@@ -206,13 +295,15 @@ class UpdateProgressTest(unittest.TestCase):
         self.assertTrue(run.call_args_list[-1].kwargs['check'])
 
     def test_no_tray_install_does_not_attempt_tray_restart(self):
-        with mock.patch.object(updater.sys, 'platform', 'win32'),                 mock.patch.object(updater.subprocess, 'run', side_effect=[mock.Mock(returncode=0), mock.Mock(returncode=1)]) as run:
+        with mock.patch.object(updater.sys, 'platform', 'win32'), \
+                mock.patch.object(updater.subprocess, 'run', side_effect=[mock.Mock(returncode=0), mock.Mock(returncode=1)]) as run:
             self.real_update_apps('v0.9.0')
         self.assertEqual(run.call_count, 2)
 
     def test_new_release_notes_reach_whats_new(self):
         from codex_os3 import ui_api
-        with mock.patch.object(ui_api, '__version__', '0.6.5'),                 mock.patch.object(ui_api, '_prev_version', return_value='0.6.3'):
+        with mock.patch.object(ui_api, '__version__', '0.6.5'), \
+                mock.patch.object(ui_api, '_prev_version', return_value='0.6.3'):
             note = ui_api.whatsnew()
         self.assertTrue(note['show'])
         self.assertEqual(note['sections'][0]['version'], '0.6.5')

@@ -118,6 +118,11 @@ def request_update(cfg):
     state = manual_state().get("state")
     if state in ("queued", "installing", "switching") or update_progress.get().get("state") in update_progress.ACTIVE:
         raise ValueError("An update is already in progress.")
+    if update_progress.get().get("recovery_required"):
+        try:
+            restore_previous()
+        except Exception as error:
+            raise ValueError(f"Previous files must be restored before retrying: {error}") from error
     store.kv_set("manual_update", {"state": "queued", "tag": tag})
     update_progress.set_state("queued", tag, "queued", f"Update to {tag} requested. Waiting for the updater.")
     update_progress.open_window(APP)
@@ -146,6 +151,7 @@ def install(tag, app=APP, run_tests=True):
     update_progress.open_window(app)
     tmp = None
     copying = False
+    recovery_required = False
     try:
         tmp = tempfile.mkdtemp(prefix="os3-router-update-")
         with tarfile.open(fileobj=io.BytesIO(_get(f"https://codeload.github.com/{REPO}/tar.gz/refs/tags/{tag}"))) as t:
@@ -165,10 +171,27 @@ def install(tag, app=APP, run_tests=True):
                        CODEX_HOME=os.path.join(test_home, "codex"),
                        CODEX_OS3_HOME=os.path.join(test_home, "router"))
             env.pop("PYTHONPATH", None)
-            r = subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "tests"], cwd=src, env=env,
-                               capture_output=True, text=True, timeout=900, **platform_util.no_window_kwargs())
+            # Preserve diagnostics outside the disposable extraction directory.
+            # A stderr tail can hide the failure behind an unrelated socket frame.
+            log_path = os.path.join(config.HOME, "update-tests.log")
+            os.makedirs(config.HOME, exist_ok=True)
+            with open(log_path, "w", encoding="utf-8") as log:
+                os.chmod(log_path, 0o600)
+                log.write(f"Release: {tag}\nPlatform: {sys.platform}\nPython: {sys.version}\n")
+                log.flush()
+                try:
+                    r = subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "tests", "-v"],
+                                       cwd=src, env=env, stdout=log, stderr=subprocess.STDOUT,
+                                       text=True, timeout=900, **platform_util.no_window_kwargs())
+                except subprocess.TimeoutExpired as error:
+                    log.write("\nUpdate validation timed out after 900 seconds.\n")
+                    raise RuntimeError(f"new version tests timed out; full log: {log_path}") from error
+                log.write(f"\nTest process exit code: {r.returncode}\n")
             if r.returncode:
-                raise RuntimeError("new version failed its tests: " + (r.stderr or r.stdout)[-400:])
+                with open(log_path, encoding="utf-8", errors="replace") as log:
+                    failures = [line.strip() for line in log if line.startswith(("FAIL:", "ERROR:", "FAILED ("))]
+                summary = "; ".join(failures)[:160] or f"exit code {r.returncode}"
+                raise RuntimeError(f"new version failed its tests: {summary}; full log: {log_path}")
         update_progress.set_state("installing", tag, "backup", "Keeping a copy of the previous version…")
         prev = app + ".prev"
         shutil.rmtree(prev, ignore_errors=True)
@@ -190,8 +213,9 @@ def install(tag, app=APP, run_tests=True):
                 restore_previous(app)
                 message += " The previous files were restored."
             except Exception as rollback_error:
+                recovery_required = True
                 message += f" Restoring the previous files also failed: {rollback_error}"[:200]
-        update_progress.fail(message)
+        update_progress.fail(message, recovery_required=recovery_required)
         raise
     finally:
         if tmp:
@@ -283,15 +307,23 @@ def maybe(cfg):
     if not managed():
         return
     progress = update_progress.get()
+    if progress.get("recovery_required"):
+        return  # Preserve the last good backup until an explicit retry restores it.
     if progress.get("state") == "installing" and progress.get("pid") != os.getpid():
+        # Validation may outlive the watchdog lease. Do not interrupt a live updater.
+        if platform_util.pid_alive(progress.get("pid")):
+            return
+        recovery_required = False
         message = "The update was interrupted before restart. Completion is unconfirmed."
         if progress.get("phase") == "copy":
             try:
                 restore_previous()
                 message += " The previous files were restored."
             except Exception as e:
+                recovery_required = True
                 message += f" Could not restore the previous files: {e}"[:200]
-        update_progress.fail(message + " Check Settings before retrying.")
+        update_progress.fail(message + " Check Settings before retrying.", recovery_required=recovery_required)
+        return  # Reconcile interruption first; never overwrite a failed rollback.
     elif progress.get("state") in update_progress.ACTIVE:
         return  # Do not install again while a reload is pending.
     manual = store.kv_get("manual_update") or {}
