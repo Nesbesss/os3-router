@@ -10,7 +10,7 @@ from unittest import mock
 os.environ.setdefault("CODEX_OS3_HOME", tempfile.mkdtemp(prefix="cxos3-test-"))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from codex_os3 import platform_util, ui_api  # noqa: E402
+from codex_os3 import platform_util, roles, ui_api  # noqa: E402
 
 NO_WINDOW = 0x08000000
 
@@ -41,8 +41,11 @@ class StatusChecksOpenNoWindow(unittest.TestCase):
             self.assertTrue(kw.get("creationflags", 0) & NO_WINDOW, cmd)
 
     def test_claude_check_has_no_console_window(self):
-        calls = self.run_on_windows(ui_api.claude_info, {"claude_bin": r"C:\npm\claude.exe"}, '{"loggedIn": true}')
-        self.assertEqual(len(calls), 1)
+        # Discovery can start a login shell on macOS when Claude is absent.
+        # Target the auth subprocess independently of installed CLIs.
+        with mock.patch.object(roles, "claude_path", return_value=r"C:\npm\claude.exe"):
+            calls = self.run_on_windows(ui_api.claude_info, {"claude_bin": r"C:\npm\claude.exe"}, '{"loggedIn": true}')
+        self.assertEqual([c[0] for c in calls], [[r"C:\npm\claude.exe", "auth", "status"]])
         self.assertTrue(calls[0][1].get("creationflags", 0) & NO_WINDOW)
 
     def test_no_window_kwargs_is_empty_elsewhere(self):

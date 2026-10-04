@@ -54,13 +54,15 @@ def _recover_failed_update():
     """Restore checked files before starting a fallback Windows worker."""
     if update_progress.get().get("state") != "switching":
         return
+    recovery_required = False
     message = "The updated router did not pass its startup health check."
     try:
         updater.restore_previous()
         message += " The previous files were restored; restarting the previous version."
     except Exception as e:
+        recovery_required = True
         message += f" Could not restore the previous files: {e}"[:200]
-    update_progress.fail(message)
+    update_progress.fail(message, recovery_required=recovery_required)
     store.event("update_failed", message, source="supervisor", level="error")
 
 
