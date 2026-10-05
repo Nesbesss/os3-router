@@ -9,7 +9,7 @@ The fix is restarting the agent through its own scheduler (os3.restart_agent).
 
 Rules decide; the optional Jev advisor (jev.py) only adds a second opinion for the
 ambiguous "is this silence expected?" case and is recorded alongside."""
-import json, os, time, urllib.request
+import json, os, re, time, urllib.parse, urllib.request
 
 from . import config, jev, os3, platform_util, roles, store
 from .notify import desktop
@@ -22,6 +22,45 @@ DEDUPE_S = 600
 # tool calls after which silence is normal: OS3 waits for the user, a worker, or a schedule
 SLOW_TOOLS = {"wait", "ask_user", "create_task", "steer_task", "schedule_add", "schedule_update",
               "phone_call", "phone_call_status", "answer_worker_question"}
+
+
+def relay_state(events, agent, previous=None):
+    """Track relay endpoints and unfinished commands, without retaining command text.
+
+    Control reconnects can migrate servers while Rabbit keeps a full tunnel pool
+    at the old URL. 'connected' in the status file describes control only.
+    """
+    state = dict(previous or {})
+    if state.get("pid") != agent.get("pid"):
+        state = {"pid": agent.get("pid")}
+    active = dict(state.get("commands") or {})
+    seen = state.get("seen", 0)
+    for e in sorted(events, key=lambda x: (x["ts"], x.get("timestamp", ""))):
+        if e["ts"] < seen:
+            continue
+        msg, component = e.get("message", ""), e.get("component")
+        if component in ("ws", "tunnel-ws") and msg.startswith("Connecting "):
+            try:
+                host = urllib.parse.urlsplit(msg.split(": ", 1)[1]).hostname
+            except (IndexError, ValueError):
+                host = None
+            if host:
+                state["control_dial" if component == "ws" else "tunnel_dial"] = host
+        elif component == "ws" and msg == "Control WS connected" and state.get("control_dial"):
+            if state.get("control_host") != state["control_dial"]:
+                state.update(control_host=state["control_dial"], changed=e["ts"])
+        elif component == "tunnel" and "Tunnel pool connected" in msg and state.get("tunnel_dial"):
+            state["tunnel_host"] = state["tunnel_dial"]
+        if component in ("exec", "guardian"):
+            match = re.match(r"CommandExecutor: (executing|completed) \[([^\]]+)\]", msg)
+            if match:
+                if match[1] == "executing":
+                    active[match[2]] = e["ts"]
+                else:
+                    active.pop(match[2], None)
+        state["seen"] = max(state.get("seen", 0), e["ts"])
+    state["commands"] = active
+    return state
 
 
 def last_response():
@@ -45,12 +84,16 @@ def snapshot():
     calls = json.loads(resp["calls"]) if resp and resp.get("calls") else []
     since = resp["done_ts"] if resp else now - 900
     agent = os3.status()
-    agent_events = os3.log_tail(since_ts=since - 5,
+    agent_events = os3.log_tail(since_ts=min(since - 900, now - 21600), max_bytes=1_000_000,
                                 components=("exec", "guardian", "ws", "tunnel", "tunnel-ws", "main"))
     # v0.1.15 moved CommandExecutor logs to guardian. Ignore the previous process's
     # shutdown messages after a restart, which can otherwise restart the replacement.
     agent_events = [e for e in agent_events if not e.get("pid") or not agent.get("pid")
                     or e["pid"] == agent["pid"]]
+    relay = relay_state(agent_events, agent, store.kv_get("watchdog_relay"))
+    store.kv_set("watchdog_relay", relay)
+    stale_route = (relay.get("control_host") and relay.get("tunnel_host")
+                   and relay["control_host"] != relay["tunnel_host"])
     execs = [e for e in agent_events if e.get("component") in ("exec", "guardian")
              and "completed" in e.get("message", "")
              and e["ts"] > since]
@@ -74,6 +117,9 @@ def snapshot():
         "agent_aborted_task_since_response": bool(aborts),
         "agent_abort_ago_s": round(now - aborts[0]) if aborts else None,
         "agent_transport_error_ago_s": round(now - transport_failure) if transport_failure else None,
+        "agent_relay_mismatch_ago_s": round(now - relay["changed"]) if stale_route else None,
+        "agent_active_commands": len(relay["commands"]),
+        "model_requests_running": store.q("SELECT COUNT(*) n FROM requests WHERE status='running'")[0]["n"],
         "agent_log_recent": [f"{e['component']} {e.get('level')} {e.get('message', '')[:120]}"
                              for e in agent_events[-12:]],
         "hangs_30m": store.q("SELECT COUNT(*) n FROM events WHERE kind IN ('retry','fix_failed','verify_failed') "
@@ -94,7 +140,21 @@ def rules(s):
     one_shot = bool(resp) and bool(resp["calls"]) and set(resp["calls"]) <= roles.BACKGROUND_MARKERS
     waiting_for_os3 = (resp and resp["result"] == "tool_call" and not one_shot
                        and (s["last_request_ago_s"] or 0) >= resp["ago_s"] - 2)  # nothing came in since
-    if waiting_for_os3 and agent.get("running"):
+    # A finished text reply does not make a later transport failure harmless.
+    # Silence alone remains normal; require an explicit failure or a stale relay.
+    broken_ages = [age for age in (s.get("agent_relay_mismatch_ago_s"),
+                                  s.get("agent_transport_error_ago_s")) if age is not None]
+    transport_broken = (agent.get("running") and s.get("last_request_ago_s") is not None
+                        and any(age >= QUIET_S and s["last_request_ago_s"] >= age for age in broken_ages))
+    if transport_broken:
+        busy = s.get("model_requests_running") or s.get("agent_active_commands")
+        out.append({"kind": "relay_stale" if s.get("agent_relay_mismatch_ago_s") is not None else "tunnel_failed",
+                    "level": "warn" if busy else "error", "action": None if busy else "restart_agent",
+                    "msg": ("Rabbit's control and tunnel relays differ" if s.get("agent_relay_mismatch_ago_s") is not None
+                            else "rabbit-agent reported a tunnel failure after the last model request")
+                           + ("; recovery deferred while a model request or command is active" if busy
+                              else "; no model request arrived after the failure")})
+    elif waiting_for_os3 and agent.get("running"):
         quick = not (set(resp["calls"]) & SLOW_TOOLS)
         # a user cancelling also runs release_all, but then OS3 keeps talking to us (the chat
         # answers); a dead tunnel stays silent. Give it 45s before calling it dead.
@@ -121,6 +181,11 @@ def rules(s):
         # e.g. after sleep: its own reconnect gave up (seen on MacBooks)
         out.append({"kind": "agent_down", "level": "error", "action": "restart_agent",
                     "msg": f"rabbit-agent {agent.get('status')} for {s['agent_status_age_s'] // 60} min"})
+    if agent.get("running") and (s.get("model_requests_running") or s.get("agent_active_commands")):
+        for finding in out:
+            if finding["action"] == "restart_agent":
+                finding.update(action=None, level="warn", msg=finding["msg"]
+                               + "; recovery deferred while a model request or command is active")
     ul = s["usage_limit"]
     if ul and time.time() - ul["ts"] < 3600:
         out.append({"kind": "usage_limit", "level": "warn", "action": None,

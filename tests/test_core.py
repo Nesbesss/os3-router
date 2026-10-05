@@ -315,14 +315,69 @@ class Watchdog(unittest.TestCase):
     def test_explicit_tunnel_failure_recovers_without_executed_tools(self):
         # A failed delivery can prevent tools from running in the first place.
         s = self.snap(agent_execs_since_response=0, agent_transport_error_ago_s=130)
-        self.assertIn(("tunnel_dead", "restart_agent"), self.kinds(s))
+        self.assertIn(("tunnel_failed", "restart_agent"), self.kinds(s))
         s["agent_transport_error_ago_s"] = 10
         self.assertNotIn(("tunnel_dead", "restart_agent"), self.kinds(s))
         s.update(agent_transport_error_ago_s=130, last_request_ago_s=5)
         self.assertEqual(self.kinds(s), [])
         s.update(last_request_ago_s=160, last_response={"ago_s": 150, "result": "tool_call",
                  "calls": ["ask_user"], "task": "t"})
+        self.assertIn(("tunnel_failed", "restart_agent"), self.kinds(s))
+
+    def test_transport_failure_after_final_answer_recovers(self):
+        s = self.snap(last_response={"ago_s": 300, "result": "final", "calls": [], "task": "t"},
+                      last_request_ago_s=300, agent_execs_since_response=0,
+                      agent_transport_error_ago_s=130)
+        self.assertIn(("tunnel_failed", "restart_agent"), self.kinds(s))
+        s.update(last_response=None)
+        self.assertIn(("tunnel_failed", "restart_agent"), self.kinds(s))
+        s.update(last_request_ago_s=100)  # a request reached the router after the logged failure
         self.assertEqual(self.kinds(s), [])
+
+    def test_relay_migration_recovers_without_any_tool_reply(self):
+        s = self.snap(last_response={"ago_s": 300, "result": "final", "calls": [], "task": "t"},
+                      last_request_ago_s=300, agent_relay_mismatch_ago_s=130)
+        self.assertIn(("relay_stale", "restart_agent"), self.kinds(s))
+        s["agent_relay_mismatch_ago_s"] = 20
+        self.assertEqual(self.kinds(s), [])
+
+    def test_transport_recovery_preserves_active_work(self):
+        for busy in ("agent_active_commands", "model_requests_running"):
+            s = self.snap(agent_transport_error_ago_s=130, **{busy: 1})
+            self.assertFalse(any(action == "restart_agent" for _, action in self.kinds(s)))
+            # The older missing-follow-up rule must also defer while work is active.
+            s.pop("agent_transport_error_ago_s")
+            self.assertFalse(any(action == "restart_agent" for _, action in self.kinds(s)))
+
+    def test_relay_state_retains_old_tunnel_until_new_pool_connects(self):
+        def event(ts, component, message):
+            return {"ts": ts, "component": component, "message": message}
+        initial = [event(1, "ws", "Connecting Control WS: wss://old.rabbit.tech/ws/agent/control/node"),
+                   event(2, "ws", "Control WS connected"),
+                   event(3, "tunnel-ws", "Connecting Tunnel WS: wss://old.rabbit.tech/ws/agent/tunnel/node"),
+                   event(4, "tunnel", "Tunnel pool connected: 2/2 up")]
+        state = watchdog.relay_state(initial, {"pid": 12})
+        moved = [event(5, "ws", "Connecting Control WS: wss://new.rabbit.tech/ws/agent/control/node"),
+                 event(6, "ws", "Control WS connected")]
+        state = watchdog.relay_state(moved, {"pid": 12}, state)
+        self.assertEqual((state["control_host"], state["tunnel_host"], state["changed"]),
+                         ("new.rabbit.tech", "old.rabbit.tech", 6))
+        # A new dial alone does not establish a replacement pool.
+        state = watchdog.relay_state([event(7, "tunnel-ws", "Connecting Tunnel WS: wss://new.rabbit.tech/ws")],
+                                     {"pid": 12}, state)
+        self.assertEqual(state["tunnel_host"], "old.rabbit.tech")
+        state = watchdog.relay_state([event(8, "tunnel", "Tunnel pool connected: 2/2 up")], {"pid": 12}, state)
+        self.assertEqual(state["tunnel_host"], state["control_host"])
+        self.assertNotIn("tunnel_host", watchdog.relay_state([], {"pid": 13}, state))
+
+    def test_relay_state_tracks_command_completion_without_command_text(self):
+        start = {"ts": 1, "component": "guardian",
+                 "message": "CommandExecutor: executing [job] secret command arguments"}
+        done = {"ts": 2, "component": "guardian", "message": "CommandExecutor: completed [job] exit=0"}
+        state = watchdog.relay_state([start], {"pid": 12})
+        self.assertEqual(state["commands"], {"job": 1})
+        self.assertNotIn("secret", json.dumps(state))
+        self.assertEqual(watchdog.relay_state([done], {"pid": 12}, state)["commands"], {})
 
     def test_snapshot_reads_current_guardian_and_transport_events(self):
         now = time.time()
