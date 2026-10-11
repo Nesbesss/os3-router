@@ -24,6 +24,10 @@ class CodexHung(RuntimeError):
     """codex showed no activity for hang_idle_s (upstream stream stalled)."""
 
 
+class ModelCapacity(RuntimeError):
+    """The selected upstream model is temporarily at capacity."""
+
+
 class UsageLimit(RuntimeError):
     """The subscription's usage limit is reached."""
 
