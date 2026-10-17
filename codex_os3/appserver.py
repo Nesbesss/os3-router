@@ -20,6 +20,7 @@ class Server:
         cmd = [codex, "app-server", *[a for f in disabled for a in ("--disable", f)], "-c", "mcp_servers={}"]
         self.codex, self.account = codex, account
         self.other = queue.Queue()  # notifications not about a thread (e.g. account/login/completed)
+        platform_util.raise_fd_limit()  # the child inherits it
         self.p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                   text=True, encoding="utf-8", errors="replace", bufsize=1, env=accounts.env(account),
                                   **platform_util.popen_group_kwargs())
@@ -136,6 +137,22 @@ def stop_all():
         _servers.clear()
 
 
+def _out_of_files(e):
+    return "too many open files" in str(e).lower() or "os error 24" in str(e).lower()
+
+
+def _restart(account, srv):
+    """Stop the Codex that ran out of files, so the next request starts a fresh one. Another request may already
+    have started its replacement under this account: that one stays registered and running."""
+    if srv is None:
+        return
+    key = account or accounts.MAIN
+    with _lock:
+        if _servers.get(key) is srv:
+            del _servers[key]
+    srv.stop()
+
+
 def _limits(rl):
     """app-server rate limits -> codex_runner's shape (primary = 5 h, secondary = weekly)."""
     if not rl:
@@ -148,6 +165,21 @@ def _limits(rl):
 def run(cfg, prompt, model, schema=None, alive=lambda: True, images=(), resume=None, keep=False, role=None, on_text=None,
         account=None, image_gen=False):
     """-> (text, usage, thread, rate_limits). Raises ClientGone, CodexHung, UsageLimit, RuntimeError."""
+    kw = dict(schema=schema, alive=alive, images=images, resume=resume, keep=keep, role=role, on_text=on_text,
+              account=account, image_gen=image_gen)
+    try:
+        return _run(cfg, prompt, model, **kw)
+    except RuntimeError as e:
+        if not _out_of_files(e):
+            raise
+        # the shared Codex has run out of files: a fresh one, and this request once more
+        store.event("appserver", f"Codex ran out of open files, restarting it: {str(e)[:120]}", source="appserver", level="warn")
+        _restart(account, getattr(e, "srv", None))
+        return _run(cfg, prompt, model, **kw)
+
+
+def _run(cfg, prompt, model, schema=None, alive=lambda: True, images=(), resume=None, keep=False, role=None, on_text=None,
+         account=None, image_gen=False):
     os.makedirs(WORKDIR, exist_ok=True)
     slug, effort = split_model(model, cfg["effort"])
     tmp = []
@@ -157,6 +189,7 @@ def run(cfg, prompt, model, schema=None, alive=lambda: True, images=(), resume=N
         f.close()
         tmp.append(f.name)
     release = take(cfg, role, alive)
+    srv = None
     try:
         srv = server(cfg, account, image_gen)
         base = {"model": slug, "cwd": WORKDIR, "sandbox": "read-only", "approvalPolicy": "never",
@@ -259,6 +292,9 @@ def run(cfg, prompt, model, schema=None, alive=lambda: True, images=(), resume=N
                 raise UsageLimit(msg, r.group(1).strip() if r else "")
             raise RuntimeError(msg)
         return text, usage, tid, _limits(srv.rate_limits())
+    except RuntimeError as e:
+        e.srv = srv  # run() retires this Codex, not a newer one another request may have started
+        raise
     finally:
         release()
         for f in tmp:

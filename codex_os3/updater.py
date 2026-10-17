@@ -2,7 +2,7 @@
 release; a newer one is downloaded, its own offline test suite must pass, then its files are
 copied over the install (previous version kept in app.prev) and the service reloads without
 downtime. Only for installs made by the installer (~/.codex-os3/app); off with auto_update=false."""
-import io, json, os, plistlib, shutil, subprocess, sys, tarfile, tempfile, time, urllib.error, urllib.parse, urllib.request
+import io, json, os, plistlib, shutil, socket, subprocess, sys, tarfile, tempfile, time, urllib.error, urllib.parse, urllib.request
 
 from . import __version__, config, platform_util, store, update_progress
 
@@ -16,6 +16,13 @@ def ver(v):
         return tuple(int(x) for x in str(v).lstrip("v").split("-")[0].split(".")[:3])
     except ValueError:
         return (0,)
+
+
+def transient(e):
+    """Trouble that goes away by itself: offline, DNS, a timeout, GitHub's 429 or 5xx. Not a failed test or a 401."""
+    if isinstance(e, urllib.error.HTTPError):
+        return e.code == 429 or e.code >= 500
+    return isinstance(e, (urllib.error.URLError, TimeoutError, socket.timeout, ConnectionError))
 
 
 def _request(url, timeout=60, method="GET"):
@@ -39,8 +46,18 @@ def _request(url, timeout=60, method="GET"):
             if method == "HEAD":
                 command.append("--head")
             r = subprocess.run(command + [url], capture_output=True, timeout=timeout + 10)
+            if r.returncode and platform_util.WINDOWS and b"REVOCATION" in r.stderr.upper():
+                # Schannel could not reach the revocation server: retry without that check. Only retried here, since
+                # curl older than 7.70 rejects the flag.
+                r = subprocess.run(command + ["--ssl-revoke-best-effort", url], capture_output=True, timeout=timeout + 10)
             if r.returncode:
-                raise RuntimeError(f"curl: {r.stderr.decode(errors='replace').strip()[:200]}") from e
+                message = f"curl: {r.stderr.decode(errors='replace').strip()[:200]}"
+                # network trouble (no DNS, refused, timed out, cut off) is retried at the next check, as urllib's is
+                if r.returncode == 28:
+                    raise TimeoutError(message) from e
+                if r.returncode in (6, 7, 52, 56):
+                    raise ConnectionError(message) from e
+                raise RuntimeError(message) from e
             status_text, final_url = r.stdout.decode(errors="replace").split("\n", 1)
             status = int(status_text)
             if status >= 400:
@@ -338,6 +355,7 @@ def maybe(cfg):
     try:
         tag = latest()
         store.kv_set("update_latest", tag)
+        store.kv_set("update_fail_streak", 0)
         from . import ui_api
         v = ui_api.codex_info(cfg, fresh=True)["version"]
         if v and ver(v) < ver(ui_api.MIN_CODEX):
@@ -348,6 +366,15 @@ def maybe(cfg):
         install(tag)
         store.event("update", f"{tag} installed, switching over", source="updater")
     except Exception as e:  # offline, GitHub down, tests failed: stay on this version
-        # a dropped connection (Wi-Fi, sleep) is not a problem to show; a refused download or a failed test is
-        blip = isinstance(e, (urllib.error.URLError, TimeoutError, ConnectionError)) and not isinstance(e, urllib.error.HTTPError)
-        store.event("update_failed", f"{type(e).__name__}: {e}"[:300], source="updater", level="info" if blip else "warn")
+        if transient(e):
+            # a dropped connection (Wi-Fi, sleep) or GitHub's 5xx is tried again at the next check; it is reported
+            # only when it lasts (three checks in a row, about 1.5 hours), not as a failed update
+            streak = (store.kv_get("update_fail_streak") or 0) + 1
+            store.kv_set("update_fail_streak", streak)
+            store.event("update_check", f"{type(e).__name__}: {e}"[:300], source="updater", level="info")
+            if streak == 3:
+                store.event("update_failed", f"GitHub unreachable at {streak} checks in a row: {type(e).__name__}: {e}"[:300],
+                            source="updater", level="warn")
+        else:
+            store.kv_set("update_fail_streak", 0)
+            store.event("update_failed", f"{type(e).__name__}: {e}"[:300], source="updater", level="warn")
