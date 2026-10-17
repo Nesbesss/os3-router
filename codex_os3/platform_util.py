@@ -89,6 +89,26 @@ def popen_group_kwargs():
     return {"start_new_session": True}
 
 
+def raise_fd_limit(want=10240):
+    """Raise this process's soft open-file limit; children inherit it. launchd starts agents with a soft
+    limit of 256 on macOS, and one long-running Codex keeps files open per loaded thread, so it ran out
+    ("Too many open files (os error 24)"). Windows has no such limit to raise."""
+    try:
+        import resource
+    except ImportError:
+        return
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    for n in (want, 4096):
+        n = n if hard == resource.RLIM_INFINITY else min(n, hard)
+        if n <= soft:
+            return
+        try:
+            resource.setrlimit(resource.RLIMIT_NOFILE, (n, hard))
+            return
+        except (ValueError, OSError):  # e.g. macOS refuses more than its per-process maximum
+            continue
+
+
 def kill_tree(p):
     """Kill a Popen and everything it spawned (codex is a node wrapper around a native binary)."""
     try:

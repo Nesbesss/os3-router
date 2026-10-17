@@ -857,6 +857,66 @@ class AppServerStartTest(unittest.TestCase):
             gate.set()
             t.join()
 
+    def test_out_of_files_restarts_the_shared_codex_once(self):
+        from codex_os3 import appserver, config
+        broken = mock.Mock(loaded=set(), subs={})
+        broken.request.side_effect = RuntimeError(
+            "app-server thread/start: Failed to initialize session: failed to open thread writer lock: Too many open files (os error 24)")
+        fresh = mock.Mock(loaded=set(), subs={})
+        def request(method, params, *args):
+            if method == "turn/start":
+                fresh.subs["T"].put({"method": "item/completed", "params": {"item": {"type": "agentMessage", "text": "ok"}}})
+                fresh.subs["T"].put({"method": "turn/completed", "params": {"turn": {"status": "completed"}}})
+            return {"thread": {"id": "T"}} if method == "thread/start" else {}
+        fresh.request.side_effect = request
+        fresh.rate_limits.return_value = None
+        with mock.patch.object(appserver, "server", side_effect=[broken, fresh]), \
+                mock.patch.dict(appserver._servers, {appserver.accounts.MAIN: broken}, clear=True):
+            text = appserver.run(config.load(), "hi", "gpt-6-luna")[0]
+            self.assertEqual(appserver._servers, {})
+        self.assertEqual(text, "ok")
+        broken.stop.assert_called_once_with()
+
+    def test_other_errors_do_not_restart_the_shared_codex(self):
+        from codex_os3 import appserver, config
+        srv = mock.Mock(loaded=set(), subs={})
+        srv.request.side_effect = RuntimeError("app-server thread/start: model not found")
+        with mock.patch.object(appserver, "server", return_value=srv) as server:
+            with self.assertRaises(RuntimeError):
+                appserver.run(config.load(), "hi", "gpt-6-luna")
+        self.assertEqual(server.call_count, 1)
+        srv.stop.assert_not_called()
+
+
+@unittest.skipIf(sys.platform == "win32", "POSIX file-descriptor limits")
+class FdLimitTest(unittest.TestCase):
+    def fake_resource(self, soft, hard):
+        fake = mock.Mock(RLIMIT_NOFILE=7, RLIM_INFINITY=-1)
+        fake.getrlimit.return_value = (soft, hard)
+        return fake
+
+    def test_soft_open_file_limit_is_raised_for_codex_children(self):
+        from codex_os3 import platform_util
+        fake = self.fake_resource(256, -1)
+        with mock.patch.dict(sys.modules, {"resource": fake}):
+            platform_util.raise_fd_limit()
+        fake.setrlimit.assert_called_once_with(7, (10240, -1))
+
+    def test_a_refused_limit_falls_back_to_a_smaller_one(self):
+        from codex_os3 import platform_util
+        fake = self.fake_resource(256, 20000)
+        fake.setrlimit.side_effect = [ValueError("too high"), None]
+        with mock.patch.dict(sys.modules, {"resource": fake}):
+            platform_util.raise_fd_limit()
+        self.assertEqual(fake.setrlimit.call_args_list, [mock.call(7, (10240, 20000)), mock.call(7, (4096, 20000))])
+
+    def test_a_limit_that_is_already_high_is_left_alone(self):
+        from codex_os3 import platform_util
+        fake = self.fake_resource(10240, -1)
+        with mock.patch.dict(sys.modules, {"resource": fake}):
+            platform_util.raise_fd_limit()
+        fake.setrlimit.assert_not_called()
+
 
 class UpdaterTest(unittest.TestCase):
     def test_install_from_release_archive(self):
