@@ -43,13 +43,21 @@ def _request(url, timeout=60, method="GET"):
             output = os.path.join(tmp, "response")
             command = [curl, "-sSL", "--max-time", str(timeout), "-A", "os3-router/" + __version__,
                        "--output", output, "--write-out", "%{http_code}\n%{url_effective}"]
-            if os.name == "nt":  # Schannel: a revocation server that can't be reached is not a failed download
-                command.append("--ssl-revoke-best-effort")
             if method == "HEAD":
                 command.append("--head")
             r = subprocess.run(command + [url], capture_output=True, timeout=timeout + 10)
+            if r.returncode and platform_util.WINDOWS and b"REVOCATION" in r.stderr.upper():
+                # Schannel could not reach the revocation server: retry without that check. Only retried here, since
+                # curl older than 7.70 rejects the flag.
+                r = subprocess.run(command + ["--ssl-revoke-best-effort", url], capture_output=True, timeout=timeout + 10)
             if r.returncode:
-                raise RuntimeError(f"curl: {r.stderr.decode(errors='replace').strip()[:200]}") from e
+                message = f"curl: {r.stderr.decode(errors='replace').strip()[:200]}"
+                # network trouble (no DNS, refused, timed out, cut off) is retried at the next check, as urllib's is
+                if r.returncode == 28:
+                    raise TimeoutError(message) from e
+                if r.returncode in (6, 7, 52, 56):
+                    raise ConnectionError(message) from e
+                raise RuntimeError(message) from e
             status_text, final_url = r.stdout.decode(errors="replace").split("\n", 1)
             status = int(status_text)
             if status >= 400:

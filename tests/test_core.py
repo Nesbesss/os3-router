@@ -584,9 +584,10 @@ class CodexUpdatePauseTest(unittest.TestCase):
 
     def test_standalone_codex_is_updated_by_the_openai_installer_when_npm_is_missing(self):
         from codex_os3 import config, selffix
+        codex = os.path.join(os.path.expanduser("~"), ".local", "bin", "codex")
         with mock.patch.object(selffix.subprocess, "run", return_value=mock.Mock(returncode=0, stdout="", stderr="")) as run, \
                 mock.patch.object(selffix.ui_api, "codex_info", return_value={"version": "1"}), \
-                mock.patch.object(selffix.platform_util, "codex_path", return_value="/Users/x/.local/bin/codex"), \
+                mock.patch.object(selffix.platform_util, "codex_path", return_value=codex), \
                 mock.patch.object(selffix.platform_util, "WINDOWS", False), \
                 mock.patch.object(selffix.shutil, "which", return_value=None), \
                 mock.patch.object(selffix.os.path, "isfile", return_value=False):
@@ -595,8 +596,21 @@ class CodexUpdatePauseTest(unittest.TestCase):
         cmd, kwargs = run.call_args.args[0], run.call_args.kwargs
         self.assertEqual(cmd[0], "bash")
         self.assertIn("latest/download/install.sh | sh", cmd[2])
-        self.assertEqual(kwargs["env"]["CODEX_INSTALL_DIR"], "/Users/x/.local/bin")
+        self.assertEqual(kwargs["env"]["CODEX_INSTALL_DIR"], os.path.expanduser("~/.local/bin"))
         self.assertEqual(kwargs["cwd"], config.HOME)
+
+    def test_codex_inside_an_app_bundle_is_never_written_by_the_installer(self):
+        from codex_os3 import selffix
+        app_codex = "/Applications/ChatGPT.app/Contents/Resources/codex"
+        with mock.patch.object(selffix.subprocess, "run") as run, \
+                mock.patch.object(selffix.platform_util, "codex_path", return_value=app_codex), \
+                mock.patch.object(selffix.platform_util, "WINDOWS", False), \
+                mock.patch.object(selffix.shutil, "which", return_value=None), \
+                mock.patch.object(selffix.os.path, "isfile", return_value=False):
+            ok, msg = selffix.update_codex({"codex_bin": app_codex})
+        self.assertFalse(ok)
+        self.assertIn("app", msg)
+        run.assert_not_called()
 
 
 class TransientUpdateErrorTest(unittest.TestCase):
@@ -628,6 +642,46 @@ class TransientUpdateErrorTest(unittest.TestCase):
         self.assertEqual(kinds.count("update_check"), 3)
         self.assertEqual(kinds.count("update_failed"), 1)
         self.assertEqual(store.kv_get("update_fail_streak"), 3)
+
+
+class CurlFallbackTest(unittest.TestCase):
+    """Python can't verify a certificate here, so the updater downloads with curl instead."""
+    def fetch(self, results):
+        """results: (returncode, stderr) for each curl call; a successful call writes the body to --output."""
+        import urllib.error
+        from codex_os3 import platform_util, updater
+        calls = []
+
+        def fake_run(command, **kw):
+            calls.append(command)
+            code, err = results[len(calls) - 1]
+            if not code:
+                with open(command[command.index("--output") + 1], "wb") as f:
+                    f.write(b"payload")
+            return mock.Mock(returncode=code, stdout=b"200\nhttps://example.com/x", stderr=err)
+        with mock.patch.object(updater.urllib.request, "urlopen", side_effect=urllib.error.URLError("CERTIFICATE_VERIFY_FAILED")), \
+                mock.patch.object(updater.shutil, "which", return_value="/usr/bin/curl"), \
+                mock.patch.object(updater.subprocess, "run", side_effect=fake_run), \
+                mock.patch.object(platform_util, "WINDOWS", True):
+            return updater._request("https://example.com/x"), calls
+
+    def test_windows_revocation_failure_is_retried_once_with_best_effort(self):
+        (data, _), calls = self.fetch([(35, b"schannel: CRYPT_E_NO_REVOCATION_CHECK (0x80092012)"), (0, b"")])
+        self.assertEqual(data, b"payload")
+        self.assertEqual(len(calls), 2)
+        self.assertNotIn("--ssl-revoke-best-effort", calls[0])
+        self.assertIn("--ssl-revoke-best-effort", calls[1])
+
+    def test_network_failures_are_transient_and_other_failures_are_not(self):
+        from codex_os3 import updater
+        for code, kind in ((28, TimeoutError), (6, ConnectionError), (7, ConnectionError), (56, ConnectionError)):
+            with self.subTest(code=code):
+                with self.assertRaises(kind) as caught:
+                    self.fetch([(code, b"curl: network")])
+                self.assertTrue(updater.transient(caught.exception))
+        with self.assertRaises(RuntimeError) as caught:
+            self.fetch([(60, b"SSL certificate problem")])
+        self.assertFalse(updater.transient(caught.exception))
 
 
 class SetupChoiceTest(unittest.TestCase):
@@ -923,6 +977,27 @@ class AppServerStartTest(unittest.TestCase):
             self.assertEqual(appserver._servers, {})
         self.assertEqual(text, "ok")
         broken.stop.assert_called_once_with()
+
+    def test_a_request_that_hit_the_limit_does_not_stop_a_newer_codex(self):
+        from codex_os3 import appserver, config
+        broken = mock.Mock(loaded=set(), subs={})
+        broken.request.side_effect = RuntimeError("app-server turn/start: Too many open files (os error 24)")
+        newer = mock.Mock(loaded=set(), subs={})  # another request already replaced the broken one
+        fresh = mock.Mock(loaded=set(), subs={})
+        def request(method, params, *args):
+            if method == "turn/start":
+                fresh.subs["T"].put({"method": "item/completed", "params": {"item": {"type": "agentMessage", "text": "ok"}}})
+                fresh.subs["T"].put({"method": "turn/completed", "params": {"turn": {"status": "completed"}}})
+            return {"thread": {"id": "T"}} if method == "thread/start" else {}
+        fresh.request.side_effect = request
+        fresh.rate_limits.return_value = None
+        with mock.patch.object(appserver, "server", side_effect=[broken, fresh]), \
+                mock.patch.dict(appserver._servers, {appserver.accounts.MAIN: newer}, clear=True):
+            text = appserver.run(config.load(), "hi", "gpt-6-luna")[0]
+            self.assertIs(appserver._servers[appserver.accounts.MAIN], newer)
+        self.assertEqual(text, "ok")
+        broken.stop.assert_called_once_with()
+        newer.stop.assert_not_called()
 
     def test_other_errors_do_not_restart_the_shared_codex(self):
         from codex_os3 import appserver, config

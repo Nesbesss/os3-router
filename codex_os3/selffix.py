@@ -33,13 +33,15 @@ def update_codex(cfg):
                 break
         if npm:
             cmd, label = [npm, "install", "-g", "@openai/codex@latest"], "npm install -g @openai/codex@latest"
-        elif b and not platform_util.WINDOWS:
+        elif b and ".app/" in b:
+            return False, "Codex comes from an app bundle: update that app to update Codex"
+        elif b and not platform_util.WINDOWS and os.path.dirname(os.path.abspath(b)) == os.path.expanduser("~/.local/bin"):
             # a standalone install (OpenAI's installer, as install.sh does): no npm to ask, so run that installer again
             # into the same folder; launchd and the service have no PATH with ~/.local/bin in it
             cmd = ["bash", "-c", "set -o pipefail; curl -fsSL --retry 3 "
                    "https://github.com/openai/codex/releases/latest/download/install.sh | sh"]
             label = "OpenAI's Codex installer"
-            env.update(CODEX_NON_INTERACTIVE="1", CODEX_INSTALL_DIR=os.path.dirname(b))
+            env.update(CODEX_NON_INTERACTIVE="1", CODEX_INSTALL_DIR=os.path.expanduser("~/.local/bin"))
         else:
             return False, "npm not found: install Node.js, then run: npm i -g @openai/codex@latest"
     before = ui_api.codex_info(cfg, fresh=True)["version"]
