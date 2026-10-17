@@ -582,6 +582,53 @@ class CodexUpdatePauseTest(unittest.TestCase):
             selffix.update_codex({"codex_bin": "/x/codex"})
         self.assertEqual(run.call_args.kwargs["cwd"], config.HOME)
 
+    def test_standalone_codex_is_updated_by_the_openai_installer_when_npm_is_missing(self):
+        from codex_os3 import config, selffix
+        with mock.patch.object(selffix.subprocess, "run", return_value=mock.Mock(returncode=0, stdout="", stderr="")) as run, \
+                mock.patch.object(selffix.ui_api, "codex_info", return_value={"version": "1"}), \
+                mock.patch.object(selffix.platform_util, "codex_path", return_value="/Users/x/.local/bin/codex"), \
+                mock.patch.object(selffix.platform_util, "WINDOWS", False), \
+                mock.patch.object(selffix.shutil, "which", return_value=None), \
+                mock.patch.object(selffix.os.path, "isfile", return_value=False):
+            ok, _ = selffix.update_codex({"codex_bin": "/x/codex"})
+        self.assertTrue(ok)
+        cmd, kwargs = run.call_args.args[0], run.call_args.kwargs
+        self.assertEqual(cmd[0], "bash")
+        self.assertIn("latest/download/install.sh | sh", cmd[2])
+        self.assertEqual(kwargs["env"]["CODEX_INSTALL_DIR"], "/Users/x/.local/bin")
+        self.assertEqual(kwargs["cwd"], config.HOME)
+
+
+class TransientUpdateErrorTest(unittest.TestCase):
+    def test_network_trouble_is_transient_but_a_refused_download_is_not(self):
+        import socket, urllib.error
+        from codex_os3 import updater
+        http = lambda code: urllib.error.HTTPError("https://api.github.com/x", code, "x", {}, None)
+        for e in (http(429), http(502), http(504), urllib.error.URLError("nodename nor servname provided"),
+                  socket.timeout("timed out"), TimeoutError("read"), ConnectionError("reset")):
+            with self.subTest(error=repr(e)):
+                self.assertTrue(updater.transient(e))
+        for e in (http(401), http(404), RuntimeError("new version failed its tests")):
+            with self.subTest(error=repr(e)):
+                self.assertFalse(updater.transient(e))
+
+    def test_a_blip_is_reported_only_after_three_checks_in_a_row(self):
+        import urllib.error
+        from codex_os3 import __version__, updater
+        store.kv_set("update_fail_streak", 0)
+        with mock.patch.object(updater, "managed", return_value=True), \
+                mock.patch.object(updater.update_progress, "get", return_value={}), \
+                mock.patch.object(updater, "latest", side_effect=urllib.error.HTTPError("u", 504, "Gateway Time-out", {}, None)), \
+                mock.patch.object(updater.store, "event") as event:
+            for _ in range(3):
+                store.kv_set("update_checked", 0)
+                store.kv_set("apps_version", __version__)
+                updater.maybe({"auto_update": True})
+        kinds = [c.args[0] for c in event.call_args_list]
+        self.assertEqual(kinds.count("update_check"), 3)
+        self.assertEqual(kinds.count("update_failed"), 1)
+        self.assertEqual(store.kv_get("update_fail_streak"), 3)
+
 
 class SetupChoiceTest(unittest.TestCase):
     """The wizard asks which AI you use and then checks only that one (it used to insist on Codex)."""

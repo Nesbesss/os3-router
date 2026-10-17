@@ -113,9 +113,9 @@ def restart_agent():
                            text=True, timeout=300)
         if r.returncode != 0:
             return False, f"install.sh failed: {r.stderr.strip()[-300:]}"
-    for _ in range(60):
+    for _ in range(120):  # a slow reconnect (Windows, after sleep) took more than 60 s and then succeeded
         n = status()
         if n.get("running") and n.get("pid") != s.get("pid") and n.get("status") == "connected":
             return True, f"rabbit-agent restarted (pid {n['pid']})"
         time.sleep(1)
-    return False, "rabbit-agent did not come back as connected within 60s"
+    return False, "rabbit-agent did not come back as connected within 120s"

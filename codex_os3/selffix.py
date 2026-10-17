@@ -23,7 +23,7 @@ def update_codex(cfg):
     if b:
         env["PATH"] = os.path.dirname(b) + os.pathsep + env.get("PATH", "")  # npm next to node (nvm)
     if "/Cellar/" in real or "/Caskroom/" in real:
-        cmd = [shutil.which("brew") or "/opt/homebrew/bin/brew", "upgrade", "codex"]
+        cmd, label = [shutil.which("brew") or "/opt/homebrew/bin/brew", "upgrade", "codex"], "brew upgrade codex"
     else:
         npm = None
         for d in (os.path.dirname(b) if b else "", ""):
@@ -31,20 +31,28 @@ def update_codex(cfg):
             if cand and os.path.isfile(cand):
                 npm = cand
                 break
-        if not npm:
+        if npm:
+            cmd, label = [npm, "install", "-g", "@openai/codex@latest"], "npm install -g @openai/codex@latest"
+        elif b and not platform_util.WINDOWS:
+            # a standalone install (OpenAI's installer, as install.sh does): no npm to ask, so run that installer again
+            # into the same folder; launchd and the service have no PATH with ~/.local/bin in it
+            cmd = ["bash", "-c", "set -o pipefail; curl -fsSL --retry 3 "
+                   "https://github.com/openai/codex/releases/latest/download/install.sh | sh"]
+            label = "OpenAI's Codex installer"
+            env.update(CODEX_NON_INTERACTIVE="1", CODEX_INSTALL_DIR=os.path.dirname(b))
+        else:
             return False, "npm not found: install Node.js, then run: npm i -g @openai/codex@latest"
-        cmd = [npm, "install", "-g", "@openai/codex@latest"]
     before = ui_api.codex_info(cfg, fresh=True)["version"]
     try:
         # from the router's own folder: an installer swapping the app folder can delete the one this process
         # started in, and npm then dies with "uv_cwd ENOENT" (seen on a real Mac, every 30 minutes for days)
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=900, env=env, cwd=config.HOME)
     except (OSError, subprocess.SubprocessError) as e:
-        return False, f"{' '.join(cmd[1:])} failed: {e}"
+        return False, f"{label} failed: {e}"
     codex_runner._known.clear()  # its feature flags may have changed
     after = ui_api.codex_info(cfg, fresh=True)["version"]
     if r.returncode:
-        return False, f"{' '.join(cmd[1:])} failed: {(r.stderr or r.stdout)[-300:]}"
+        return False, f"{label} failed: {(r.stderr or r.stdout)[-300:]}"
     store.kv_set("codex_outdated", None)
     return True, f"Codex updated {before} → {after}"
 
