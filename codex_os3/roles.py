@@ -46,15 +46,20 @@ def requested_effort(body):
     return e.lower() if isinstance(e, str) and e.lower() in EFFORT_ORDER else None
 
 
+CLAUDE_EFFORTS = ["low", "medium", "high", "xhigh", "max"]  # what `claude --effort` accepts
+
+
 def fit_effort(model, effort):
-    """The nearest effort this model supports (e.g. OS3's "minimal" on a Claude model -> "low")."""
+    """The nearest effort this model supports (e.g. OS3's "minimal" or "none" on a Claude model -> "low").
+    A Claude model that isn't listed (a newer one) gets the CLI's levels, so no effort can reach its name."""
     m = next((x for x in all_codex_models() + CLAUDE if x["slug"] == model), None)
-    if not m or effort in m["efforts"]:
+    efforts = m["efforts"] if m else CLAUDE_EFFORTS if backend(model) == "claude" else None
+    if not efforts or effort in efforts:
         return effort
     if effort not in EFFORT_ORDER:  # a hand-edited config value
-        return m["default_effort"]
+        return m["default_effort"] if m else "medium"
     i = EFFORT_ORDER.index(effort)
-    return min(m["efforts"], key=lambda e: abs(EFFORT_ORDER.index(e) - i) if e in EFFORT_ORDER else 99)
+    return min(efforts, key=lambda e: abs(EFFORT_ORDER.index(e) - i) if e in EFFORT_ORDER else 99)
 
 
 def runnable(cfg, model):
@@ -240,6 +245,8 @@ def claude_installed(cfg=None):
 
 _E = ["low", "medium", "high", "xhigh", "max"]
 CLAUDE = [
+    {"slug": "claude-haiku-5-5", "name": "Claude Haiku 5.5", "description": "Claude Code · the latest Haiku: fastest and lightest.",
+     "efforts": _E, "default_effort": "low", "backend": "claude"},
     {"slug": "claude-sonnet-5-5", "name": "Claude Sonnet 5.5", "description": "Claude Code · fast and capable; the best balance.",
      "efforts": _E, "default_effort": "medium", "backend": "claude"},
     {"slug": "claude-sonnet-5", "name": "Claude Sonnet 5", "description": "Claude Code · the previous Sonnet.",
