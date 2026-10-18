@@ -1040,6 +1040,53 @@ class FdLimitTest(unittest.TestCase):
         fake.setrlimit.assert_not_called()
 
 
+class ClaudeEffortTest(unittest.TestCase):
+    """OS3's "none" slider reached the Claude CLI as the model name claude-haiku-5-5-none."""
+    def cfg(self, **roles):
+        return {"model": "gpt-6-luna", "effort": "medium", "role_routing": True, "roles": roles}
+
+    def test_none_on_a_listed_claude_role_becomes_its_lowest_level(self):
+        from codex_os3 import roles
+        cfg = self.cfg(chat={"model": "claude-haiku-5-5", "effort": "low"})
+        with mock.patch.object(roles, "claude_installed", return_value=True):
+            self.assertEqual(roles.pick(cfg, "chat", "gpt-6-luna", os3_effort="none"), "claude-haiku-5-5-low")
+
+    def test_unlisted_claude_model_takes_the_cli_levels(self):
+        from codex_os3 import roles
+        self.assertEqual(roles.fit_effort("claude-new-7-0", "none"), "low")
+        self.assertEqual(roles.fit_effort("claude-new-7-0", "ultra"), "max")
+        self.assertEqual(roles.fit_effort("claude-new-7-0", "xhigh"), "xhigh")
+        self.assertEqual(roles.fit_effort("claude-new-7-0", "bogus"), "medium")
+
+    def test_a_codex_model_that_lists_none_keeps_its_name_clean(self):
+        from codex_os3 import roles
+        from codex_os3.codex_runner import split_model
+        listed = [{"slug": "gpt-test", "name": "t", "efforts": ["none", "low", "medium"],
+                   "default_effort": "low", "backend": "codex"}]
+        cfg = self.cfg(chat={"model": "gpt-test", "effort": "low"})
+        with mock.patch.object(roles, "all_codex_models", return_value=listed), \
+                mock.patch.object(roles, "claude_installed", return_value=False):
+            model = roles.pick(cfg, "chat", "gpt-6-luna", os3_effort="none")
+        self.assertEqual(model, "gpt-test-none")
+        self.assertEqual(split_model(model, "medium"), ("gpt-test", "none"))
+
+    def test_split_model_takes_none_off_the_name(self):
+        from codex_os3.codex_runner import split_model
+        self.assertEqual(split_model("claude-haiku-5-5-none", "medium"), ("claude-haiku-5-5", "none"))
+
+    def test_haiku_5_5_is_offered_with_the_levels_the_cli_accepts(self):
+        from codex_os3 import roles
+        with mock.patch.object(roles, "claude_installed", return_value=True), \
+                mock.patch.object(roles, "all_codex_models", return_value=[]):
+            slugs = {m["slug"]: m for m in roles.available_models()}
+        self.assertEqual(slugs["claude-haiku-5-5"]["efforts"], ["low", "medium", "high", "xhigh", "max"])
+        self.assertEqual(slugs["claude-haiku-5-5"]["default_effort"], "low")
+
+    def test_claude_cli_never_gets_none(self):
+        from codex_os3 import claude_runner
+        self.assertEqual(claude_runner.EFFORTS["none"], "low")
+
+
 class UpdaterTest(unittest.TestCase):
     def test_install_from_release_archive(self):
         import io, tarfile

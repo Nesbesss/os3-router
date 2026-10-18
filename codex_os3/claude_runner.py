@@ -14,7 +14,7 @@ AUTH_RE = re.compile(r"not logged in|run /login|invalid api key|oauth token .{0,
 # Claude Code too old for the model, or no access to it: "There's an issue with the selected model (…). It may
 # not exist or you may not have access to it."
 MODEL_RE = re.compile(r"issue with the selected model|may not have access", re.I)
-EFFORTS = {"minimal": "low", "ultra": "max"}  # codex effort names without a Claude equivalent
+EFFORTS = {"none": "low", "minimal": "low", "ultra": "max"}  # codex effort names without a Claude equivalent
 
 
 def binary(cfg):
