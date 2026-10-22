@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.8 (2026-10-05)
+- **Recover model tunnels after a Rabbit control-server migration leaves the pool on the old relay**, even when the last model reply was a finished answer. Explicit tunnel failures after final answers now receive the same recovery as failures after tool calls. A new request or replacement pool suppresses recovery; silence by itself remains normal.
+- **Defer Rabbit recovery while model requests or guardian commands are active.** Relay tracking retains hostnames and command IDs only, and resets when the agent process changes.
+
 ## 0.6.7 (2026-10-03)
 - **A streamed answer is kept once its text has been sent.** The router no longer starts silent correction calls after beginning an answer, which could leave OS3 waiting for more output and later replace the answer with different text or tool calls. Replies that have not been streamed still receive their validation and corrections.
 - **“This doesn't mean the service is unavailable” no longer triggers an availability correction.** Actual unavailability assertions elsewhere in the same reply are still checked.
