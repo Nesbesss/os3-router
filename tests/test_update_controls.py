@@ -17,6 +17,8 @@ class UpdateControlsTest(unittest.TestCase):
             mock.patch.object(updater, "__version__", "0.4.14"),
             mock.patch.object(updater, "update_apps"),
             mock.patch.object(store, "kv_get", side_effect=lambda k, default=None: self.values.get(k, default)),
+            mock.patch.object(updater.platform_util, 'pid_alive', return_value=False),
+
             mock.patch.object(store, "kv_set", side_effect=lambda k, v: self.values.__setitem__(k, v)),
             mock.patch.object(store, "event"),
         ]
@@ -27,6 +29,20 @@ class UpdateControlsTest(unittest.TestCase):
 
     def call(self, method, path):
         return ui_api.handle(method, path, {}, {}, self.cfg)[:2]
+
+    def test_retry_requires_successful_restore_after_rollback_failure(self):
+        self.values['update_latest'] = 'v0.4.15'
+        update_progress.set_state('installing', 'v0.4.15', 'copy', 'Installing')
+        update_progress.fail('rollback failed', recovery_required=True)
+        with mock.patch.object(updater, 'restore_previous', side_effect=OSError('locked')):
+            self.assertEqual(self.call('POST', 'updates/install')[0], 409)
+        self.assertTrue(update_progress.get()['recovery_required'])
+        with mock.patch.object(updater, 'restore_previous') as restore:
+            self.assertEqual(self.call('POST', 'updates/install')[0], 202)
+        restore.assert_called_once_with()
+        self.assertEqual(update_progress.get()['state'], 'queued')
+        self.assertNotIn('recovery_required', update_progress.get())
+
 
     def test_manual_update_with_auto_off_waits_for_running_version(self):
         with mock.patch.object(updater, "latest", return_value="v0.4.15"):

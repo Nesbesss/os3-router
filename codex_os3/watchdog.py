@@ -240,7 +240,14 @@ def loop(stop):
         try:
             owner = _owner(me)
             if cfg.get("watchdog", True) and owner:
-                tick(cfg)
+                try:
+                    tick(cfg)
+                except Exception as e:
+                    # Optional recovery failures must not starve queued updates.
+                    try:
+                        store.event("watchdog_error", f"{type(e).__name__}: {e}", source="watchdog", level="error")
+                    except Exception:
+                        pass
             if owner:
                 from . import updater
                 updater.maybe(cfg)

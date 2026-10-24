@@ -64,11 +64,11 @@ def confirm_running(version):
             store.kv_set("manual_update", {"state": "installed", "tag": value["tag"]})
 
 
-def fail(message):
+def fail(message, **extra):
     value = get()
     if value.get("state") not in ACTIVE:
         return
-    set_state("failed", value["tag"], "failed", message, error=message)
+    set_state("failed", value["tag"], "failed", message, error=message, **extra)
     manual = store.kv_get("manual_update") or {}
     if manual.get("tag") == value["tag"]:
         store.kv_set("manual_update", {"state": "failed", "tag": value["tag"], "error": message})
